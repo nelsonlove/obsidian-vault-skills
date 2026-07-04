@@ -1,0 +1,90 @@
+import type { App } from "obsidian";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { transformAll, type NoteInput } from "./transform.js";
+
+const MANIFEST_NAME = ".vault-skills-manifest.json";
+
+export interface ExportOptions {
+  outputDir: string;
+  pluginName: string;
+  pluginDescription?: string;
+}
+
+export interface ExportSummary {
+  skills: number;
+  agents: number;
+  removed: number;
+  warnings: string[];
+  outputDir: string;
+}
+
+/** Strip a single leading YAML frontmatter block. */
+function stripFrontmatter(content: string): string {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "");
+}
+
+/** Collect every note whose frontmatter marks it a skill/agent (via the metadata cache). */
+export async function collectNotes(app: App): Promise<NoteInput[]> {
+  const notes: NoteInput[] = [];
+  for (const file of app.vault.getMarkdownFiles()) {
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm || (fm.type !== "skill" && fm.type !== "agent")) continue;
+    const raw = await app.vault.cachedRead(file);
+    notes.push({ path: file.path, frontmatter: fm as Record<string, unknown>, body: stripFrontmatter(raw) });
+  }
+  return notes;
+}
+
+export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
+  const notes = await collectNotes(app);
+  const { generated, warnings } = transformAll(notes);
+
+  ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription);
+
+  // Overwrite: remove previously-generated files (tracked in the manifest), then write.
+  const manifestPath = path.join(opts.outputDir, MANIFEST_NAME);
+  let prev: string[] = [];
+  try { prev = JSON.parse(fs.readFileSync(manifestPath, "utf8")).files ?? []; } catch { /* no prior manifest */ }
+
+  const nextFiles = generated.map((g) => g.relOut);
+  const toRemove = prev.filter((p) => !nextFiles.includes(p));
+  for (const rel of toRemove) {
+    const abs = path.join(opts.outputDir, rel);
+    try { fs.rmSync(abs, { force: true }); } catch { /* ignore */ }
+    const parent = path.dirname(abs);
+    try { if (fs.readdirSync(parent).length === 0) fs.rmdirSync(parent); } catch { /* ignore */ }
+  }
+
+  for (const g of generated) {
+    const abs = path.join(opts.outputDir, g.relOut);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, g.content);
+  }
+
+  fs.writeFileSync(manifestPath, JSON.stringify({
+    generatedFrom: "obsidian-vault-skills",
+    count: generated.length,
+    files: nextFiles.sort(),
+  }, null, 2) + "\n");
+
+  return {
+    skills: generated.filter((g) => g.kind === "skill").length,
+    agents: generated.filter((g) => g.kind === "agent").length,
+    removed: toRemove.length,
+    warnings,
+    outputDir: opts.outputDir,
+  };
+}
+
+/** Make sure the output dir is a valid Claude Code plugin (create manifest if absent). */
+function ensurePluginManifest(outputDir: string, name: string, description?: string): void {
+  const file = path.join(outputDir, ".claude-plugin", "plugin.json");
+  if (fs.existsSync(file)) return;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({
+    name,
+    description: description || `Skills and agents exported from an Obsidian vault by ${name}.`,
+    version: "0.1.0",
+  }, null, 2) + "\n");
+}
