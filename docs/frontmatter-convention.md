@@ -22,6 +22,24 @@ sits in. Put notes wherever you like; the tree lives in frontmatter.
 | `model` | no | agent | `sonnet` \| `opus` \| `haiku` \| id \| `inherit`. |
 | `version` | no | skill | Skill version. |
 
+## Field namespacing
+
+Bare field names (`type`, `parent`, `description`, …) can collide with your vault's own
+frontmatter. Pick a mode in the plugin settings — it only changes *where* the fields live;
+the meanings and rules are identical:
+
+- **bare** (default) — top-level: `type`, `parent`, …
+- **prefix** — a configurable prefix: `vs-type`, `vs-parent`, … Keeps fields top-level, so
+  the `parent` wikilink still gets Obsidian **backlinks and graph edges**.
+- **nested** — everything under one key:
+  ```yaml
+  vault-skills:
+    type: agent
+    parent: "[[research]]"
+  ```
+  Cleanest, but a nested `parent` wikilink **may not** get backlinks/graph edges, and
+  Obsidian's Properties UI won't edit nested objects. Prefer `prefix` if you navigate by link.
+
 ## The three edges
 
 Everything is one relationship — **`parent`** — read three ways:

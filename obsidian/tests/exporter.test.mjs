@@ -36,6 +36,32 @@ test("collectNotes filters to skill/agent notes, strips frontmatter, resolves pa
   assert.deepEqual(sweep.parentPaths, ["grants.md"], "parent wikilink resolved to path");
 });
 
+test("prefix field mode reads vs-* fields and ignores bare `type`", async () => {
+  const notes = [
+    { path: "root.md", frontmatter: { "vs-type": "agent", "vs-name": "vault", "vs-root": true }, content: "body" },
+    { path: "grants.md", frontmatter: { "vs-type": "agent", "vs-name": "grants", "vs-parent": "[[root]]" }, content: "body" },
+    { path: "plain.md", frontmatter: { type: "agent" }, content: "body" }, // bare type ignored in prefix mode
+  ];
+  const got = await collectNotes(mockApp(notes), { mode: "prefix", prefix: "vs-", key: "" });
+  assert.equal(got.length, 2);
+  const grants = got.find((n) => n.path === "grants.md");
+  assert.equal(grants.frontmatter.type, "agent");
+  assert.equal(grants.frontmatter.name, "grants");
+  assert.deepEqual(grants.parentPaths, ["root.md"]);
+});
+
+test("nested field mode reads fields under the configured key", async () => {
+  const notes = [
+    { path: "root.md", frontmatter: { "vault-skills": { type: "agent", name: "vault", root: true } }, content: "body" },
+    { path: "grants.md", frontmatter: { "vault-skills": { type: "agent", name: "grants", parent: "[[root]]" } }, content: "body" },
+  ];
+  const got = await collectNotes(mockApp(notes), { mode: "nested", prefix: "", key: "vault-skills" });
+  assert.equal(got.length, 2);
+  const grants = got.find((n) => n.path === "grants.md");
+  assert.equal(grants.frontmatter.type, "agent");
+  assert.deepEqual(grants.parentPaths, ["root.md"]);
+});
+
 test("runExport writes the tree: root, child agent, owned skill, plugin.json, manifest", async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "vs-exp-"));
   const summary = await runExport(mockApp(SAMPLE), { outputDir: out, pluginName: "vault-skills" });

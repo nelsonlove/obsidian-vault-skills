@@ -5,12 +5,18 @@ export interface VaultSkillsSettings {
   outputDir: string;
   pluginName: string;
   exportOnSave: boolean;
+  fieldMode: "bare" | "prefix" | "nested";
+  fieldPrefix: string;
+  fieldKey: string;
 }
 
 export const DEFAULT_SETTINGS: VaultSkillsSettings = {
   outputDir: "~/.claude/skills/vault-skills",
   pluginName: "vault-skills",
   exportOnSave: false,
+  fieldMode: "bare",
+  fieldPrefix: "vs-",
+  fieldKey: "vault-skills",
 };
 
 export class VaultSkillsSettingTab extends PluginSettingTab {
@@ -48,6 +54,38 @@ export class VaultSkillsSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(this.plugin.settings.exportOnSave).onChange(async (v) => {
           this.plugin.settings.exportOnSave = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Frontmatter field mode")
+      .setDesc("How vault-skills fields are namespaced, to avoid colliding with existing frontmatter (e.g. your own `description`/`type`). bare: type/parent/… · prefix: <prefix>type/… · nested: under one key.")
+      .addDropdown((d) =>
+        d.addOptions({ bare: "bare", prefix: "prefix", nested: "nested" })
+          .setValue(this.plugin.settings.fieldMode)
+          .onChange(async (v) => {
+            this.plugin.settings.fieldMode = v as "bare" | "prefix" | "nested";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Field prefix")
+      .setDesc('For "prefix" mode, e.g. "vs-" → vs-type, vs-parent. Keeps fields top-level, so the parent wikilink still gets backlinks/graph edges.')
+      .addText((t) =>
+        t.setValue(this.plugin.settings.fieldPrefix).onChange(async (v) => {
+          this.plugin.settings.fieldPrefix = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Field key")
+      .setDesc('For "nested" mode, e.g. "vault-skills" → all fields under that key. Note: a nested parent wikilink may not get Obsidian backlinks/graph edges, and the Properties UI won\'t edit nested objects.')
+      .addText((t) =>
+        t.setValue(this.plugin.settings.fieldKey).onChange(async (v) => {
+          this.plugin.settings.fieldKey = v;
           await this.plugin.saveSettings();
         }),
       );

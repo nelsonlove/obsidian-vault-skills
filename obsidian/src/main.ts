@@ -41,7 +41,11 @@ export default class VaultSkillsPlugin extends Plugin {
     this.exporting = true;
     try {
       const outputDir = expandTilde(this.settings.outputDir);
-      const summary = await runExport(this.app, { outputDir, pluginName: this.settings.pluginName });
+      const summary = await runExport(this.app, {
+        outputDir,
+        pluginName: this.settings.pluginName,
+        fields: { mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey },
+      });
 
       const issue = (label: string, items: string[]) =>
         items.length ? `\n${items.length} ${label}: ${items[0]}${items.length > 1 ? " …" : ""}` : "";

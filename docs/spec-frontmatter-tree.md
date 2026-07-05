@@ -9,6 +9,9 @@ its skills; `root → … → leaf` delegation). Folders become purely organizat
 
 - A note is a candidate iff frontmatter `type` ∈ {`skill`, `agent`, `policy`}.
 - Location in the vault is irrelevant to structure.
+- Fields may be **bare**, **prefixed** (`<prefix>type`), or **nested** under one key
+  (a settings choice). The exporter normalizes them to a bare view before the transform, so
+  every rule below is identical regardless of mode.
 
 ## Frontmatter fields
 
