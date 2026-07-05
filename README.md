@@ -13,7 +13,7 @@ your vault ─▶ obsidian/ (producer) ─writes─▶ ~/.claude/skills/vault-sk
 
 | Directory | What it is | Runtime |
 |---|---|---|
-| [`obsidian/`](obsidian) | The **Obsidian plugin** — the exporter. Discovers `type: skill\|agent` notes via the metadata cache, builds/validates the tree, and writes the Claude Code plugin (generated content **plus** the bundled `new-skill` helper). | runs inside Obsidian |
+| [`obsidian/`](obsidian) | The **Obsidian plugin** — the exporter (and an MCP server). Discovers `type: skill\|agent\|policy` notes via the metadata cache, builds/validates the tree, and writes the Claude Code plugin (generated content **plus** the bundled `new-skill` helper). | runs inside Obsidian |
 | [`docs/`](docs) | The note convention and the build spec. | — |
 | [`claude-code/`](claude-code) | Reference scaffold (manifest + README). The live plugin is generated to `~/.claude/skills/vault-skills` by default, not here. | — |
 
@@ -34,10 +34,19 @@ tree and compiles it:
 - edges are **validated** (unresolved / wrong-type / multiple parents, cycles, unreachable,
   depth past the 5-level nesting cap).
 
+The plugin also serves a **`vault-skills` MCP server**, so an agent can validate, inspect,
+export, and mark notes without the Obsidian UI (`vault_skills_{validate,tree,export,mark}`).
+
 See [`docs/frontmatter-convention.md`](docs/frontmatter-convention.md) (authoring) and
 [`docs/spec-frontmatter-tree.md`](docs/spec-frontmatter-tree.md) (full rules).
 
-## Quick start
+## Install
+
+**Via BRAT (recommended).** Install [BRAT](https://github.com/TfTHacker/obsidian42-brat)
+from Community Plugins, then *Add beta plugin* → `nelsonlove/vault-skills`. BRAT installs the
+latest release and keeps it updated. Enable **Vault Skills** in Obsidian afterward.
+
+**From source:**
 
 ```bash
 # build the Obsidian plugin

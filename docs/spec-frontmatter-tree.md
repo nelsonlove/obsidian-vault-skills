@@ -9,9 +9,9 @@ its skills; `root → … → leaf` delegation). Folders become purely organizat
 
 - A note is a candidate iff frontmatter `type` ∈ {`skill`, `agent`, `policy`}.
 - Location in the vault is irrelevant to structure.
-- Fields may be **bare**, **prefixed** (`<prefix>type`), or **nested** under one key
-  (a settings choice). The exporter normalizes them to a bare view before the transform, so
-  every rule below is identical regardless of mode.
+- Fields may be **prefixed** (`<prefix>type`; the default prefix is blank ⇒ bare top-level
+  `type`/`parent`/…) or **nested** under one key — a settings choice. The exporter normalizes
+  them to a plain view before the transform, so every rule below is identical regardless of mode.
 
 ## Frontmatter fields
 
@@ -74,7 +74,8 @@ Errors skip the node and warn; warnings advise.
   - Delegation set = agents whose parent is this agent.
   - Body += a **Vault access** line (vault path), any applicable **policy** bodies (see
     below), a **Skills** note (what's preloaded), and a routing section — **Vault routing**
-    for the root, **Delegates to** for others — listing children by label.
+    for the root, **Delegates to** for others — listing children by their **namespaced
+    subagent name** (`<plugin>:<name>`) so a parent delegates first-try via the Agent tool.
 - **Synthesized root**: name `vault`, generic router body, owns level-0 skills, delegates
   to level-1 agents.
 
@@ -86,6 +87,19 @@ agent in its parent's subtree** (root ⇒ all agents). For each agent, applicabl
 bodies are gathered along its ancestor-or-self chain, root-most first, and appended after
 the Vault-access line. Validation: multiple parents, an unresolved parent, or a parent that
 isn't a valid agent ⇒ error (the policy is dropped).
+
+## MCP server
+
+The plugin also serves its own MCP server (`vault-skills`, over a Unix socket + embedded
+stdio bridge, auto-registered with Claude Code via `claude mcp add`), so an agent can drive
+the same cores without the Obsidian UI:
+
+- `vault_skills_validate` — errors/warnings/counts (read-only)
+- `vault_skills_tree` — the current hierarchy (read-only)
+- `vault_skills_export` — write the plugin to the output dir (then `/reload-plugins`)
+- `vault_skills_mark` — set the vault-skills fields on an existing note by path
+
+State (socket, discovery, bridge) lives in `~/.claude/vault-skills-mcp/`.
 
 ## Removed vs. the JD model
 

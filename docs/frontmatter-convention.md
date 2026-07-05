@@ -18,7 +18,7 @@ sits in. Put notes wherever you like; the tree lives in frontmatter.
 | `name` | no | both | Base name (default: filename slug). |
 | `id` | no | both | Optional name prefix, e.g. `56` → `56-<slug>`. |
 | `label` | no | both | Display label used in breadcrumbs (default: name). |
-| `tools` | no | agent | Allowlist, e.g. `[Read, Grep]`. `Agent` is appended automatically when the agent has children. |
+| `tools` | no | agent | Allowlist, e.g. `[Read, Grep]`. `Agent` is appended when it has child agents, `Skill` when it owns skills. |
 | `model` | no | agent | `sonnet` \| `opus` \| `haiku` \| id \| `inherit`. |
 | `version` | no | skill | Skill version. |
 
@@ -28,9 +28,9 @@ Bare field names (`type`, `parent`, `description`, …) can collide with your va
 frontmatter. Pick a mode in the plugin settings — it only changes *where* the fields live;
 the meanings and rules are identical:
 
-- **bare** (default) — top-level: `type`, `parent`, …
-- **prefix** — a configurable prefix: `vs-type`, `vs-parent`, … Keeps fields top-level, so
-  the `parent` wikilink still gets Obsidian **backlinks and graph edges**.
+- **prefix** (default) — a configurable prefix: `vs-type`, `vs-parent`, … **Leave the prefix
+  blank** (the default) for bare top-level fields (`type`, `parent`, …); either way fields
+  stay top-level, so the `parent` wikilink still gets Obsidian **backlinks and graph edges**.
 - **nested** — everything under one key:
   ```yaml
   vault-skills:
@@ -51,6 +51,23 @@ Everything is one relationship — **`parent`** — read three ways:
 - **No parent → level 0.** With strictly one parent, the way to **share** a skill across
   agents is to give it *no* `parent`: it lands at level 0, owned by the root and globally
   invokable. Level 0 is the only place a skill is reachable from everywhere.
+
+## Cross-cutting agents & auto-delegation
+
+An agent whose `parent` is the root is **cross-cutting** — a "slot" specialist reachable
+from the top for one craft, alongside the vertical scope agents. Whether the main agent
+actually hands off to it is driven **entirely by its `description`** (Claude reads
+descriptions to choose a subagent — there is no separate routing table). Two conventions
+steer that:
+
+- Phrase the description as **when to use** the agent, and open with **"Use PROACTIVELY
+  to …"** so the orchestrator delegates on its own initiative, not only when the agent is
+  named. `MUST BE USED when …` is the stronger form.
+- Give each agent **one clear responsibility** — a focused description routes cleanly.
+
+Auto-delegation is probabilistic, so keep descriptions specific. The read/write posture is
+**mechanical**, not advisory: grant a read-only agent only `[Read, Grep, Glob]` and it
+cannot write no matter what its prompt says.
 
 ## Worked example
 
@@ -93,7 +110,8 @@ agents past the 5-level nesting cap. Details in the spec.
 
 ## Authoring vs. runtime
 
-These notes are the **source of truth**. The plugin's `claude-code/skills/` and
-`claude-code/agents/` are **generated** — never hand-edit them. Edit the note, re-export
-from the **Vault Skills** Obsidian plugin (ribbon icon or the *Export skills & agents to
-Claude Code* command), then run `/reload-plugins` in Claude Code.
+These notes are the **source of truth**. The generated skills/agents (written to
+`~/.claude/skills/vault-skills` by default) must **never** be hand-edited. Edit the note,
+re-export from the **Vault Skills** Obsidian plugin — ribbon icon, the *Export skills &
+agents to Claude Code* command, or the `vault_skills_export` MCP tool — then run
+`/reload-plugins` in Claude Code.
