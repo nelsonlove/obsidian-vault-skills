@@ -90,6 +90,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
 
   fs.writeFileSync(manifestPath, JSON.stringify({
     generatedFrom: "obsidian-vault-skills",
+    vault: vaultPath ?? null,
     count: generated.length,
     files: nextFiles.sort(),
   }, null, 2) + "\n");
