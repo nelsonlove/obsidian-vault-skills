@@ -40,6 +40,24 @@ test("shared skill at level 0 (no parent) is owned by the root", () => {
   assert.match(find(generated, "agents/vault.md").content, /skills:\n\s+- "vault-skills:add-callout"/);
 });
 
+test("agent that owns skills gets the Skill tool when tools are explicitly listed", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("grants.md", { type: "agent", name: "grants", tools: ["Read"] }, ["root.md"]),
+    note("sweep.md", { type: "skill", name: "sweep" }, ["grants.md"]),
+  ], OPTS);
+  assert.match(find(generated, "agents/grants.md").content, /tools: \[Read, Skill\]/);
+});
+
+test("vault path is baked into every agent when provided", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+  ], { pluginName: "vault-skills", synthesizeRoot: true, vaultPath: "/Users/x/obsidian" });
+  const root = find(generated, "agents/vault.md");
+  assert.match(root.content, /## Vault access/);
+  assert.match(root.content, /`\/Users\/x\/obsidian`/);
+});
+
 test("synthesized root when none is declared", () => {
   const { generated } = transformAll([
     note("area.md", { type: "agent", name: "research", label: "Research" }, []),

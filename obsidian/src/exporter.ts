@@ -61,7 +61,10 @@ export async function collectNotes(app: App): Promise<NoteInput[]> {
 
 export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
   const notes = await collectNotes(app);
-  const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true });
+  // FileSystemAdapter exposes getBasePath(); duck-type it to keep `obsidian` type-only.
+  const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
+  const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
+  const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription);
 

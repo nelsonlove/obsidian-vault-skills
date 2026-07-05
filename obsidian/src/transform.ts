@@ -28,6 +28,8 @@ export interface Generated {
 export interface TransformOptions {
   pluginName: string;
   synthesizeRoot?: boolean;
+  /** Absolute vault path, baked into each agent so it can read/write the vault. */
+  vaultPath?: string;
 }
 
 export interface TransformResult {
@@ -227,13 +229,19 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       continue;
     }
 
-    // agent
+    // agent — guarantee structural tools from tree position (Agent to delegate, Skill to
+    // invoke owned skills). Only matters when tools are explicitly listed; omitting tools
+    // inherits everything.
     let tools = n.tools;
     if (n.children.length && tools && !tools.includes("Agent")) tools = [...tools, "Agent"];
+    if (n.ownedSkills.length && tools && !tools.includes("Skill")) tools = [...tools, "Skill"];
     const skillRefs = n.ownedSkills.map((s) => `${opts.pluginName}:${s.genName}`);
     const fmOut = toYaml({ name: n.genName, description: describe(n), tools, model: n.model, skills: skillRefs });
 
     let bodyOut = n.body;
+    if (opts.vaultPath) {
+      bodyOut += `\n\n## Vault access\n\nYour skills and agents are authored in the Obsidian vault at \`${opts.vaultPath}\`. You can read and write notes there directly (Read/Grep/Glob and Write/Edit under that path), or use the \`vault-mcp\` tools if connected.`;
+    }
     if (skillRefs.length) {
       bodyOut += `\n\n## Skills\n\nThese scope skills are preloaded into your context — use them for work in this scope: ${skillRefs.map((s) => `\`${s}\``).join(", ")}.`;
     }
