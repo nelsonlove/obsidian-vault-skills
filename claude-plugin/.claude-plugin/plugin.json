@@ -1,0 +1,9 @@
+{
+  "name": "vault-skills",
+  "description": "Landing plugin for skills and agents exported from an Obsidian (Johnny Decimal) vault. Its skills/ and agents/ are populated by the vault-skills Obsidian plugin (../obsidian); loaded by Claude Code in place.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Nelson",
+    "email": "nelson.love@me.com"
+  }
+}

@@ -8,9 +8,9 @@ export function expandTilde(p: string): string {
   return p;
 }
 
-/** Default Claude Code plugin repo this exporter writes into. */
+/** Default Claude Code plugin dir this exporter writes into (the monorepo's claude-plugin/). */
 export function defaultOutputDir(): string {
-  return path.join(os.homedir(), "repos", "vault-skills");
+  return path.join(os.homedir(), "repos", "vault-skills", "claude-plugin");
 }
 
 /** The in-place load location: ~/.claude/skills/<pluginName>. */

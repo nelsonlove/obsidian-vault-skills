@@ -9,7 +9,7 @@ export interface VaultSkillsSettings {
 }
 
 export const DEFAULT_SETTINGS: VaultSkillsSettings = {
-  outputDir: "~/repos/vault-skills",
+  outputDir: "~/repos/vault-skills/claude-plugin",
   pluginName: "vault-skills",
   manageSymlink: true,
   exportOnSave: false,
