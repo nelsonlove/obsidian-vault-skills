@@ -46,12 +46,13 @@ test("runExport writes skills, agents, plugin.json and manifest", async () => {
   const summary = await runExport(mockApp(SAMPLE), { outputDir: out, pluginName: "vault-skills" });
 
   assert.equal(summary.skills, 1);
-  assert.equal(summary.agents, 1);
+  assert.equal(summary.agents, 2, "grant agent + synthesized 00-vault root");
   assert.ok(fs.existsSync(path.join(out, "skills/00-add-callout/SKILL.md")));
   assert.ok(fs.existsSync(path.join(out, "agents/56-grant-deadline-sweep.md")));
+  assert.ok(fs.existsSync(path.join(out, "agents/00-vault.md")), "synthesized root agent");
   assert.ok(fs.existsSync(path.join(out, ".claude-plugin/plugin.json")), "plugin.json created");
   const manifest = JSON.parse(fs.readFileSync(path.join(out, ".vault-skills-manifest.json"), "utf8"));
-  assert.equal(manifest.count, 2);
+  assert.equal(manifest.count, 3);
 
   fs.rmSync(out, { recursive: true, force: true });
 });

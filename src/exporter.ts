@@ -38,7 +38,7 @@ export async function collectNotes(app: App): Promise<NoteInput[]> {
 
 export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
   const notes = await collectNotes(app);
-  const { generated, warnings } = transformAll(notes);
+  const { generated, warnings } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true });
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription);
 

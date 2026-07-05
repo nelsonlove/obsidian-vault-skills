@@ -21,9 +21,29 @@ Claude Code load the result in place.
    Code loads it in place. Then you run `/reload-plugins` (the one step the plugin can't
    do for you — there's no channel into a running Claude Code session).
 
-Agents with `delegates-to` get the `Agent` tool added automatically and their wikilinks
-resolved to the generated agent names, so area routers can spawn their category agents
-(nested subagents work up to 5 levels deep).
+## Scope = agent + owned skills
+
+A scope isn't a bag of skills — it's an **agent that owns a skill set**. The exporter
+compiles the vault into a wired cascade:
+
+```
+00 general vault agent  →  area agents  →  category agents
+```
+
+- **Auto-wired delegation** — the root vault agent delegates to every area agent, each
+  area agent to its category agents (derived from the JD structure; `Agent` tool added
+  automatically; nested subagents work up to 5 levels deep). Manual `delegates-to`
+  wikilinks are still honored and merged in.
+- **Skill ownership via preload** — each agent gets a `skills:` frontmatter list of the
+  skills in its scope, so their full content is preloaded into that agent at spawn.
+  Universal (00) skills belong to the root; area skills to area agents; category skills
+  to category agents.
+- **Synthesized root** — if the vault has no universal agent, a `00-vault` router is
+  generated so the cascade always has an entry point.
+
+> Note: the `skills:` reference format for plugin skills (`vault-skills:56-x` vs bare
+> `56-x`) isn't pinned down in the docs — this exporter emits the namespaced form; if a
+> live test shows preload doesn't fire, switch to bare names (one line in `transform.ts`).
 
 ## Note convention
 
