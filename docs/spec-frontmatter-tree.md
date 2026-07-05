@@ -7,15 +7,15 @@ its skills; `root → … → leaf` delegation). Folders become purely organizat
 
 ## Discovery
 
-- A note is a candidate iff frontmatter `type` ∈ {`skill`, `agent`}.
+- A note is a candidate iff frontmatter `type` ∈ {`skill`, `agent`, `policy`}.
 - Location in the vault is irrelevant to structure.
 
 ## Frontmatter fields
 
 | Field | Req | Applies | Meaning |
 |---|---|---|---|
-| `type` | **yes** | both | `skill` or `agent`. |
-| `parent` | no¹ | both | A **single** `[[wikilink]]` to the parent **agent**. Omit ⇒ parent is the root. A **list ⇒ error** (strict single parent). |
+| `type` | **yes** | all | `skill`, `agent`, or `policy`. |
+| `parent` | no¹ | all | A **single** `[[wikilink]]` to the parent **agent**. Omit ⇒ parent is the root. A **list ⇒ error** (strict single parent). For a `policy`, `parent` scopes where it applies (see Compilation). |
 | `root` | no | agent | `true` marks the one root agent. |
 | `description` | rec | both | Trigger text. |
 | `name` | no | both | Base name override (default: filename slug). |
@@ -69,10 +69,20 @@ Errors skip the node and warn; warnings advise.
   - `skills:` = namespaced refs (`<plugin>:<name>`) of skills whose parent is this agent.
   - `tools` = authored tools (+ `Agent` when it has child agents).
   - Delegation set = agents whose parent is this agent.
-  - Body += a **Skills** note (what's preloaded) and a routing section — **Vault routing**
+  - Body += a **Vault access** line (vault path), any applicable **policy** bodies (see
+    below), a **Skills** note (what's preloaded), and a routing section — **Vault routing**
     for the root, **Delegates to** for others — listing children by label.
 - **Synthesized root**: name `vault`, generic router body, owns level-0 skills, delegates
   to level-1 agents.
+
+### Policy notes (shared context)
+
+A `type: policy` note is not emitted as a file. Its `parent` is resolved like any node's
+(single wikilink to an agent; omit ⇒ root). Its body is injected into the prompt of **every
+agent in its parent's subtree** (root ⇒ all agents). For each agent, applicable policy
+bodies are gathered along its ancestor-or-self chain, root-most first, and appended after
+the Vault-access line. Validation: multiple parents, an unresolved parent, or a parent that
+isn't a valid agent ⇒ error (the policy is dropped).
 
 ## Removed vs. the JD model
 

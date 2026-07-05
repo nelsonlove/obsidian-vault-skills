@@ -60,6 +60,12 @@ interface Node {
   valid: boolean;
 }
 
+interface Policy {
+  path: string;
+  parentPaths: string[];
+  body: string;
+}
+
 const SYNTH_ROOT_PATH = " synth-root";
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -112,8 +118,13 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
 
   // ---- phase 1: parse candidate nodes ----
   const nodes: Node[] = [];
+  const policies: Policy[] = [];
   for (const note of notes) {
     const fm = note.frontmatter || {};
+    if (fm.type === "policy") {
+      policies.push({ path: note.path, parentPaths: note.parentPaths ?? [], body: note.body.trim() });
+      continue;
+    }
     const kind: Kind | null = fm.type === "agent" ? "agent" : fm.type === "skill" ? "skill" : null;
     if (!kind) continue;
     const fileBase = fileBaseOf(note.path);
@@ -195,6 +206,28 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     else n.parent.ownedSkills.push(n);
   }
 
+  // ---- resolve policy notes: attach each to the agent whose subtree it governs ----
+  // (no parent ⇒ root ⇒ applies to every agent; strict single parent, must be an agent).
+  const policyBodiesByNode = new Map<string, string[]>();
+  for (const pol of policies) {
+    let parent: Node | null;
+    if (pol.parentPaths.length > 1) { errors.push(`${pol.path}: policy has multiple parents (strict single-parent)`); continue; }
+    else if (pol.parentPaths.length === 0) parent = root;
+    else parent = byPath.get(pol.parentPaths[0]) ?? null;
+    if (!parent) { errors.push(`${pol.path}: policy has an unresolved or missing parent`); continue; }
+    if (parent.kind !== "agent") { errors.push(`${pol.path}: policy parent is not an agent`); continue; }
+    if (!parent.valid) { errors.push(`${pol.path}: policy parent is invalid`); continue; }
+    const arr = policyBodiesByNode.get(parent.path) ?? [];
+    arr.push(pol.body);
+    policyBodiesByNode.set(parent.path, arr);
+  }
+  // Policies governing an agent = those attached to any ancestor-or-self, root-most first.
+  const applicablePolicies = (n: Node): string[] => {
+    const chain: Node[] = [];
+    for (let cur: Node | null = n; cur; cur = cur.parent) chain.unshift(cur);
+    return chain.flatMap((node) => policyBodiesByNode.get(node.path) ?? []);
+  };
+
   // ---- phase 6: names (dedup) ----
   const used = new Set<string>();
   for (const n of nodes) {
@@ -241,6 +274,10 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     let bodyOut = n.body;
     if (opts.vaultPath) {
       bodyOut += `\n\n## Vault access\n\nYour skills and agents are authored in the Obsidian vault at \`${opts.vaultPath}\`. You can read and write notes there directly (Read/Grep/Glob and Write/Edit under that path), or use the \`vault-mcp\` tools if connected.`;
+    }
+    const policyBodies = applicablePolicies(n);
+    if (policyBodies.length) {
+      bodyOut += `\n\n${policyBodies.join("\n\n")}`;
     }
     if (skillRefs.length) {
       bodyOut += `\n\n## Skills\n\nThese scope skills are preloaded into your context — use them for work in this scope: ${skillRefs.map((s) => `\`${s}\``).join(", ")}.`;

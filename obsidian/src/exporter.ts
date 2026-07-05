@@ -48,7 +48,7 @@ export async function collectNotes(app: App): Promise<NoteInput[]> {
   const notes: NoteInput[] = [];
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-    if (!fm || (fm.type !== "skill" && fm.type !== "agent")) continue;
+    if (!fm || (fm.type !== "skill" && fm.type !== "agent" && fm.type !== "policy")) continue;
     const raw = await app.vault.cachedRead(file);
     notes.push({
       path: file.path,

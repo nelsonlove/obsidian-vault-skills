@@ -111,6 +111,39 @@ test("depth beyond level 4 warns (nesting cap)", () => {
   assert.ok(warnings.some((w) => /exceeds the depth-5/.test(w)));
 });
 
+test("global policy (no parent) is injected into every agent", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("research.md", { type: "agent", name: "research" }, ["root.md"]),
+    note("pol.md", { type: "policy", name: "global-pol" }, [], "GLOBAL-POLICY-TEXT"),
+  ], OPTS);
+  assert.match(find(generated, "agents/vault.md").content, /GLOBAL-POLICY-TEXT/);
+  assert.match(find(generated, "agents/research.md").content, /GLOBAL-POLICY-TEXT/);
+});
+
+test("scoped policy (parent) applies to that agent's subtree only", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("research.md", { type: "agent", name: "research" }, ["root.md"]),
+    note("grants.md", { type: "agent", name: "grants" }, ["research.md"]),
+    note("other.md", { type: "agent", name: "other" }, ["root.md"]),
+    note("pol.md", { type: "policy", name: "research-pol" }, ["research.md"], "RESEARCH-ONLY-POLICY"),
+  ], OPTS);
+  assert.match(find(generated, "agents/research.md").content, /RESEARCH-ONLY-POLICY/, "on the scope agent");
+  assert.match(find(generated, "agents/grants.md").content, /RESEARCH-ONLY-POLICY/, "on a descendant");
+  assert.doesNotMatch(find(generated, "agents/other.md").content, /RESEARCH-ONLY-POLICY/, "not on a sibling subtree");
+  assert.doesNotMatch(find(generated, "agents/vault.md").content, /RESEARCH-ONLY-POLICY/, "not on the root");
+});
+
+test("policy whose parent is a skill is an error", () => {
+  const { errors } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("s.md", { type: "skill", name: "s" }, ["root.md"]),
+    note("pol.md", { type: "policy", name: "p" }, ["s.md"], "x"),
+  ], OPTS);
+  assert.ok(errors.some((e) => /policy parent is not an agent/.test(e)));
+});
+
 test("toYaml: quotes leading-[ and colon arrays; bare names stay plain", () => {
   assert.equal(toYaml({ name: "grants" }), "---\nname: grants\n---");
   assert.match(toYaml({ description: "[X] y" }), /description: "\[X\] y"/);

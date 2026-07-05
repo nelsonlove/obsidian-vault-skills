@@ -42,6 +42,8 @@ root vault agent  →  child agents  →  grandchild agents   (delegation, up to
   only sharing mechanism.
 - **Synthesized root** — if no note has `root: true`, a `vault` root is generated so the
   cascade always has an entry point.
+- **Policy notes** — a `type: policy` note injects its body as shared context into every
+  agent in its `parent`'s subtree (no parent ⇒ global).
 - **Validation** — unresolved / wrong-type / multiple parents, cycles, unreachable nodes,
   and depth past the 5-level nesting cap are reported (errors skip the node; warnings
   advise) in the export notice.

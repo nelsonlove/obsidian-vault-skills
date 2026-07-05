@@ -29,6 +29,8 @@ tree and compiles it:
 - **sharing = level 0** — one parent only; a skill with no `parent` is owned by the root
   and globally invokable;
 - a **root** is the agent marked `root: true`, or one is synthesized;
+- a **`type: policy`** note injects shared context into every agent in its `parent`'s
+  subtree (no parent ⇒ global);
 - edges are **validated** (unresolved / wrong-type / multiple parents, cycles, unreachable,
   depth past the 5-level nesting cap).
 

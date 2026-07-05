@@ -11,7 +11,7 @@ sits in. Put notes wherever you like; the tree lives in frontmatter.
 
 | Field | Req | Applies | Meaning |
 |---|---|---|---|
-| `type` | **yes** | both | `skill` or `agent`. Notes without it are ignored. |
+| `type` | **yes** | all | `skill`, `agent`, or `policy`. Notes without it are ignored. |
 | `parent` | no | both | A **single** `[[wikilink]]` to the parent **agent**. Omit ⇒ child of the root. A list is an error. |
 | `root` | no | agent | `true` marks the one root agent. |
 | `description` | rec | both | Trigger text Claude uses to load/delegate. |
@@ -49,6 +49,23 @@ routes to `grants`; `grants` owns `deadline-sweep` (preloaded) and does the work
 invoke as `/vault-skills:<name>`; agents are the subagents `vault-skills:<name>`.
 
 If you omit the root note, a `vault` root is synthesized so the cascade has an entry point.
+
+## Policy notes (shared context)
+
+A **`type: policy`** note isn't emitted as a skill or agent — its **body is injected as
+shared context into agents' prompts**. Its `parent` scopes *where* it applies:
+
+- **no `parent`** ⇒ attaches at the root ⇒ injected into **every** agent (global);
+- **`parent: [[some-agent]]`** ⇒ injected into that agent **and its whole subtree** only.
+
+Multiple policies compose (broader, root-most ones first). Same parent rules as everything
+else: a single wikilink to an **agent** — a list, or a parent that's a skill, is an error.
+
+Use policy notes for the constants / conventions / operating rules every agent in a scope
+should carry no matter what — house style, "prefer `vault-mcp`", "be conservative with
+destructive edits", and so on. (There's no plugin-level system prompt in Claude Code and
+subagents spawn fresh, so shared context has to be injected per-agent — which is what this
+does.)
 
 ## Validation
 
