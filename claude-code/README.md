@@ -14,7 +14,7 @@ The Obsidian exporter writes here (its default output dir is this directory) and
 the symlink:
 
 ```
-~/.claude/skills/vault-skills  →  <repo>/claude-plugin
+~/.claude/skills/vault-skills  →  <repo>/claude-code
 ```
 
 so Claude Code loads it in place as `vault-skills@skills-dir`. After each export, run

@@ -2,8 +2,8 @@
 
 # Generated Claude Code plugin content — a projection of your vault, regenerated
 # locally by the exporter. Only the scaffold (plugin.json, README, .gitkeep) is tracked.
-claude-plugin/skills/*
-!claude-plugin/skills/.gitkeep
-claude-plugin/agents/*
-!claude-plugin/agents/.gitkeep
-claude-plugin/.vault-skills-manifest.json
+claude-code/skills/*
+!claude-code/skills/.gitkeep
+claude-code/agents/*
+!claude-code/agents/.gitkeep
+claude-code/.vault-skills-manifest.json

@@ -7,13 +7,13 @@ delegates to its child agents.
 This is a **monorepo with two halves — a producer and a product:**
 
 ```
-your vault ─▶ obsidian/ (producer) ─writes─▶ claude-plugin/ (product) ─▶ ~/.claude/skills ─▶ Claude Code
+your vault ─▶ obsidian/ (producer) ─writes─▶ claude-code/ (product) ─▶ ~/.claude/skills ─▶ Claude Code
 ```
 
 | Directory | What it is | Runtime |
 |---|---|---|
 | [`obsidian/`](obsidian) | The **Obsidian plugin** — the exporter. Discovers `type: skill\|agent` notes via the metadata cache, builds/validates the tree, and writes the Claude Code plugin. | runs inside Obsidian |
-| [`claude-plugin/`](claude-plugin) | The **Claude Code plugin** — the landing zone the exporter populates and Claude Code loads. | loaded by Claude Code |
+| [`claude-code/`](claude-code) | The **Claude Code plugin** — the landing zone the exporter populates and Claude Code loads. | loaded by Claude Code |
 | [`docs/`](docs) | The note convention and the build spec. | — |
 
 ## The model
@@ -45,6 +45,6 @@ mkdir -p "<vault>/.obsidian/plugins/vault-skills"
 cp obsidian/manifest.json obsidian/main.js "<vault>/.obsidian/plugins/vault-skills/"
 ```
 
-Enable **Vault Skills** in Obsidian. Its default output is this repo's `claude-plugin/`,
-and it manages the `~/.claude/skills/vault-skills → claude-plugin` symlink. Hit the
+Enable **Vault Skills** in Obsidian. Its default output is this repo's `claude-code/`,
+and it manages the `~/.claude/skills/vault-skills → claude-code` symlink. Hit the
 export command, then `/reload-plugins` in Claude Code.

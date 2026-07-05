@@ -4,7 +4,7 @@ Author skills and agents as ordinary notes in your Obsidian vault, and publish t
 native **Claude Code** plugin — from inside Obsidian, one click.
 
 This is the **producer** half of the [monorepo](../README.md); it writes into the
-[`../claude-plugin`](../claude-plugin) landing plugin. It runs the exporter natively in
+[`../claude-code`](../claude-code) landing plugin. It runs the exporter natively in
 TypeScript over Obsidian's metadata cache (no file walk, no YAML parsing) and manages the
 one symlink that lets Claude Code load the result in place.
 
@@ -83,7 +83,7 @@ command **"Export skills & agents to Claude Code"**, and `/reload-plugins` in Cl
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Output plugin directory | `~/repos/vault-skills/claude-plugin` | Where the generated Claude Code plugin is written (the monorepo's landing plugin). |
+| Output plugin directory | `~/repos/vault-skills/claude-code` | Where the generated Claude Code plugin is written (the monorepo's landing plugin). |
 | Plugin name | `vault-skills` | CC plugin name / command namespace / symlink name. |
 | Manage `~/.claude` symlink | on | Ensure `~/.claude/skills/<name>` → output dir. |
 | Export on save | off | Re-export when a skill/agent note changes. |

@@ -58,7 +58,7 @@ agents past the 5-level nesting cap. Details in the spec.
 
 ## Authoring vs. runtime
 
-These notes are the **source of truth**. The plugin's `claude-plugin/skills/` and
-`claude-plugin/agents/` are **generated** — never hand-edit them. Edit the note, re-export
+These notes are the **source of truth**. The plugin's `claude-code/skills/` and
+`claude-code/agents/` are **generated** — never hand-edit them. Edit the note, re-export
 from the **Vault Skills** Obsidian plugin (ribbon icon or the *Export skills & agents to
 Claude Code* command), then run `/reload-plugins` in Claude Code.
