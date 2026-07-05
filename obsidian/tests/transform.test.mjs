@@ -16,9 +16,9 @@ test("root → area → category cascade wired by parent; Agent tool appended", 
   const root = find(generated, "agents/vault.md");
   const area = find(generated, "agents/research.md");
   assert.match(root.content, /## Vault routing/);
-  assert.match(root.content, /- `research` — Education & research/);
+  assert.match(root.content, /- `vault-skills:research` — Education & research/);
   assert.match(area.content, /tools: \[Read, Agent\]/);
-  assert.match(area.content, /- `grants` — Grants & funding/);
+  assert.match(area.content, /- `vault-skills:grants` — Grants & funding/);
 });
 
 test("skill ownership via parent → preloaded, namespaced, into the owning agent", () => {
@@ -64,7 +64,7 @@ test("synthesized root when none is declared", () => {
   ], OPTS);
   const root = find(generated, "agents/vault.md");
   assert.ok(root, "synthetic vault root");
-  assert.match(root.content, /- `research` — Research/);
+  assert.match(root.content, /- `vault-skills:research` — Research/);
 });
 
 test("strict single parent: a list of parents is an error, node not rendered", () => {

@@ -293,7 +293,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       bodyOut += `\n\n## Skills\n\nThese scope skills are preloaded into your context — use them for work in this scope: ${skillRefs.map((s) => `\`${s}\``).join(", ")}.`;
     }
     if (n.children.length) {
-      const items = n.children.map((c) => `- \`${c.genName}\` — ${c.label}`);
+      const items = n.children.map((c) => `- \`${opts.pluginName}:${c.genName}\` — ${c.label}`);
       const heading = n.isRoot
         ? "## Vault routing\n\nYou are the general vault agent. Identify which sub-agent a request belongs to and delegate to it via the Agent tool (nested subagents work up to 5 levels deep):"
         : "## Delegates to\n\nDelegate sub-scope work to the matching agent via the Agent tool:";
