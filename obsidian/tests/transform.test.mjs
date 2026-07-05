@@ -144,6 +144,19 @@ test("policy whose parent is a skill is an error", () => {
   assert.ok(errors.some((e) => /policy parent is not an agent/.test(e)));
 });
 
+test("transform exposes a structured tree (parent/children/skills)", () => {
+  const { tree } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("research.md", { type: "agent", name: "research" }, ["root.md"]),
+    note("sweep.md", { type: "skill", name: "sweep" }, ["research.md"]),
+  ], OPTS);
+  const root = tree.find((n) => n.name === "vault");
+  const research = tree.find((n) => n.name === "research");
+  assert.equal(root.parent, null);
+  assert.deepEqual(root.children, ["research"]);
+  assert.deepEqual(research.skills, ["sweep"]);
+});
+
 test("toYaml: quotes leading-[ and colon arrays; bare names stay plain", () => {
   assert.equal(toYaml({ name: "grants" }), "---\nname: grants\n---");
   assert.match(toYaml({ description: "[X] y" }), /description: "\[X\] y"/);

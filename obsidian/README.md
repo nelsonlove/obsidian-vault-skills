@@ -84,6 +84,15 @@ cp manifest.json main.js "<vault>/.obsidian/plugins/vault-skills/"
 Enable **Vault Skills** in Obsidian → Community plugins, then use the ribbon icon or the
 command **"Export skills & agents to Claude Code"**, and `/reload-plugins` in Claude Code.
 
+## Commands
+
+In the command palette (in addition to the export ribbon icon):
+
+- **Export skills & agents to Claude Code** — writes the plugin.
+- **Validate tree** — check for errors/warnings without writing (unresolved parent, cycle, depth>5, …).
+- **Show tree** — the current agent/skill hierarchy.
+- **Mark note as skill / agent / policy** — set the vault-skills fields on the active note (pick type + parent), honoring your field mode. You create the note however you like; this just marks it.
+
 ## Settings
 
 | Setting | Default | Meaning |

@@ -2,6 +2,7 @@ import { Plugin, Notice } from "obsidian";
 import { runExport } from "./exporter.js";
 import { expandTilde } from "./paths.js";
 import { DEFAULT_SETTINGS, VaultSkillsSettingTab, type VaultSkillsSettings } from "./settings.js";
+import { cmdValidate, cmdTree, cmdMark } from "./commands.js";
 
 export default class VaultSkillsPlugin extends Plugin {
   declare settings: VaultSkillsSettings;
@@ -17,6 +18,9 @@ export default class VaultSkillsPlugin extends Plugin {
       name: "Export skills & agents to Claude Code",
       callback: () => void this.export(),
     });
+    this.addCommand({ id: "validate", name: "Validate tree", callback: () => void cmdValidate(this) });
+    this.addCommand({ id: "tree", name: "Show tree", callback: () => void cmdTree(this) });
+    this.addCommand({ id: "mark", name: "Mark note as skill / agent / policy", callback: () => void cmdMark(this) });
 
     // Optional: re-export when a skill/agent note changes.
     this.registerEvent(

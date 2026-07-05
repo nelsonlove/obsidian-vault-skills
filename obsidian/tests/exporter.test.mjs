@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { runExport, collectNotes } from "../src/exporter.ts";
+import { runExport, collectNotes, analyzeVault, markFrontmatter } from "../src/exporter.ts";
 
 // Minimal stand-in for Obsidian's App, including wikilink resolution by basename.
 function mockApp(notes) {
@@ -60,6 +60,24 @@ test("nested field mode reads fields under the configured key", async () => {
   const grants = got.find((n) => n.path === "grants.md");
   assert.equal(grants.frontmatter.type, "agent");
   assert.deepEqual(grants.parentPaths, ["root.md"]);
+});
+
+test("analyzeVault returns tree + counts + no errors for a valid vault", async () => {
+  const a = await analyzeVault(mockApp(SAMPLE));
+  assert.equal(a.errors.length, 0);
+  assert.equal(a.counts.agents, 2); // vault root + grants
+  assert.equal(a.counts.skills, 1);
+  assert.ok(a.tree.find((n) => n.name === "grants"), "tree includes grants");
+});
+
+test("markFrontmatter honors the field mode", () => {
+  const input = { type: "agent", parent: "research" };
+  assert.deepEqual(markFrontmatter(input, { mode: "bare", prefix: "vs-", key: "vault-skills" }),
+    { type: "agent", parent: "[[research]]" });
+  assert.deepEqual(markFrontmatter(input, { mode: "prefix", prefix: "vs-", key: "" }),
+    { "vs-type": "agent", "vs-parent": "[[research]]" });
+  assert.deepEqual(markFrontmatter(input, { mode: "nested", prefix: "", key: "vault-skills" }),
+    { "vault-skills": { type: "agent", parent: "[[research]]" } });
 });
 
 test("runExport writes the tree: root, child agent, owned skill, plugin.json, manifest", async () => {

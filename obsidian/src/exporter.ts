@@ -1,7 +1,7 @@
 import type { App } from "obsidian";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { transformAll, type NoteInput } from "./transform.js";
+import { transformAll, type NoteInput, type TreeNode } from "./transform.js";
 import { STATIC_FILES } from "./static-skills.js";
 
 const MANIFEST_NAME = ".vault-skills-manifest.json";
@@ -142,6 +142,51 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     errors,
     outputDir: opts.outputDir,
   };
+}
+
+export interface Analysis {
+  tree: TreeNode[];
+  errors: string[];
+  warnings: string[];
+  counts: { skills: number; agents: number; policies: number };
+}
+
+/** Shared read-only core for `validate` and `tree`: collect + transform, no write. */
+export async function analyzeVault(app: App, fields: FieldConfig = DEFAULT_FIELDS, pluginName = "vault-skills"): Promise<Analysis> {
+  const notes = await collectNotes(app, fields);
+  const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
+  const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
+  const { tree, warnings, errors } = transformAll(notes, { pluginName, synthesizeRoot: true, vaultPath });
+  return {
+    tree, errors, warnings,
+    counts: {
+      agents: tree.filter((n) => n.kind === "agent").length,
+      skills: tree.filter((n) => n.kind === "skill").length,
+      policies: notes.filter((n) => n.frontmatter.type === "policy").length,
+    },
+  };
+}
+
+export interface MarkInput {
+  type: "skill" | "agent" | "policy";
+  parent?: string;      // agent basename or [[wikilink]]; empty ⇒ root
+  description?: string;
+  root?: boolean;
+}
+
+/** Pure: the frontmatter keys to set on a note to mark it, honoring the field mode. */
+export function markFrontmatter(input: MarkInput, fields: FieldConfig = DEFAULT_FIELDS): Record<string, unknown> {
+  const flat: Record<string, unknown> = { type: input.type };
+  if (input.root) flat.root = true;
+  if (input.parent) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
+  if (input.description) flat.description = input.description;
+  if (fields.mode === "prefix") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(flat)) out[fields.prefix + k] = v;
+    return out;
+  }
+  if (fields.mode === "nested") return { [fields.key]: flat };
+  return flat;
 }
 
 /** Make sure the output dir is a valid Claude Code plugin (create manifest if absent). */

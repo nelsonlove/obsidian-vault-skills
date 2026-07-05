@@ -32,10 +32,20 @@ export interface TransformOptions {
   vaultPath?: string;
 }
 
+export interface TreeNode {
+  name: string;            // generated name
+  kind: Kind;              // agent | skill
+  parent: string | null;  // parent agent's generated name (null for the root)
+  level: number;
+  skills: string[];        // owned skills' generated names (agents only)
+  children: string[];      // child agents' generated names (agents only)
+}
+
 export interface TransformResult {
   generated: Generated[];
   warnings: string[];
   errors: string[];
+  tree: TreeNode[];
 }
 
 interface Node {
@@ -295,5 +305,14 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       content: `${fmOut}\n\n${provenanceFor(src)}\n\n${bodyOut}\n` });
   }
 
-  return { generated, warnings, errors };
+  const tree: TreeNode[] = nodes.filter((n) => n.valid).map((n) => ({
+    name: n.genName,
+    kind: n.kind,
+    parent: n.parent ? n.parent.genName : null,
+    level: n.level,
+    skills: n.ownedSkills.map((s) => s.genName),
+    children: n.children.map((c) => c.genName),
+  }));
+
+  return { generated, warnings, errors, tree };
 }
