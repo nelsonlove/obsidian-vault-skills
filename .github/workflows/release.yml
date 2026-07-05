@@ -1,0 +1,41 @@
+name: Release plugin
+
+# Cut a release by pushing a version tag, e.g.:  git tag 0.1.1 && git push origin 0.1.1
+on:
+  push:
+    tags: ["*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Guard against manifest drift
+        run: |
+          if ! diff -q manifest.json obsidian/manifest.json; then
+            echo "::error::root manifest.json and obsidian/manifest.json differ — sync them before tagging."
+            exit 1
+          fi
+
+      - name: Build plugin
+        working-directory: obsidian
+        run: |
+          npm ci
+          npm run build
+
+      - name: Create GitHub release with plugin assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            obsidian/main.js obsidian/manifest.json \
+            --title "$TAG" --notes "Vault Skills $TAG. Install/update via BRAT (nelsonlove/vault-skills)."

@@ -7,3 +7,6 @@ claude-code/skills/*
 claude-code/agents/*
 !claude-code/agents/.gitkeep
 claude-code/.vault-skills-manifest.json
+
+# Internal delivery registry (ops skill) — local-only, not part of the product
+.ops/
