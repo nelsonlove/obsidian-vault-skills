@@ -3,10 +3,17 @@ import { runExport } from "./exporter.js";
 import { expandTilde } from "./paths.js";
 import { DEFAULT_SETTINGS, VaultSkillsSettingTab, type VaultSkillsSettings } from "./settings.js";
 import { cmdValidate, cmdTree, cmdMark } from "./commands.js";
+import { UnixSocketListener } from "./mcp/socket-transport.js";
+import { buildMcpServer } from "./mcp/server.js";
+import { writeBridge, writeDiscovery, removeDiscovery } from "./mcp/discovery.js";
+import { vaultSlug, socketPath, bridgeDestPath } from "./mcp/paths.js";
+import { findClaudeBinary, claudeIsRegistered, claudeRegister } from "./mcp/claude-cli.js";
 
 export default class VaultSkillsPlugin extends Plugin {
   declare settings: VaultSkillsSettings;
   private exporting = false;
+  private listener: UnixSocketListener | null = null;
+  private slug = "";
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -30,6 +37,8 @@ export default class VaultSkillsPlugin extends Plugin {
         if (fm && (fm.type === "skill" || fm.type === "agent")) void this.export(true);
       }),
     );
+
+    void this.startServer();
   }
 
   async loadSettings(): Promise<void> {
@@ -69,5 +78,41 @@ export default class VaultSkillsPlugin extends Plugin {
     } finally {
       this.exporting = false;
     }
+  }
+
+  private async startServer(): Promise<void> {
+    try {
+      writeBridge();
+      this.slug = vaultSlug(this.app.vault.getName());
+      const sp = socketPath(this.slug);
+      this.listener = new UnixSocketListener(sp, (transport) => {
+        const server = buildMcpServer({ app: this.app, pluginVersion: this.manifest.version, getSettings: () => this.settings });
+        void server.connect(transport).catch((e) => console.error("[vault-skills] server connect", e));
+      });
+      await this.listener.listen();
+      const adapter = this.app.vault.adapter as { getBasePath?: () => string } | undefined;
+      writeDiscovery(this.slug, {
+        socket_path: sp,
+        vault_path: adapter?.getBasePath?.() ?? "",
+        vault_name: this.app.vault.getName(),
+        plugin_version: this.manifest.version,
+        started_at: new Date().toISOString(),
+      });
+      void this.autoRegister();
+    } catch (e) {
+      new Notice(`Vault Skills: MCP server failed to start — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  private async autoRegister(): Promise<void> {
+    const bin = findClaudeBinary();
+    if (!bin) return; // register manually: claude mcp add --scope user vault-skills -- node ~/.claude/vault-skills-mcp/bridge.mjs
+    if (await claudeIsRegistered(bin)) return;
+    await claudeRegister(bin, bridgeDestPath()).catch(() => { /* leave to manual registration */ });
+  }
+
+  async onunload(): Promise<void> {
+    if (this.listener) await this.listener.close();
+    if (this.slug) removeDiscovery(this.slug);
   }
 }

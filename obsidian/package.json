@@ -1,12 +1,16 @@
 {
   "name": "obsidian-vault-skills-plugin",
   "version": "0.1.0",
-  "description": "Obsidian plugin that exports `type: skill|agent` notes from a Johnny Decimal vault into a native Claude Code plugin, and manages the ~/.claude symlink.",
+  "description": "Obsidian plugin that exports `type: skill|agent` notes into a native Claude Code plugin, and serves a vault-skills MCP server.",
   "type": "module",
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "test": "tsc --noEmit && node --import tsx --test 'tests/*.test.mjs'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

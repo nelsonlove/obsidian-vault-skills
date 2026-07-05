@@ -93,6 +93,24 @@ In the command palette (in addition to the export ribbon icon):
 - **Show tree** — the current agent/skill hierarchy.
 - **Mark note as skill / agent / policy** — set the vault-skills fields on the active note (pick type + parent), honoring your field mode. You create the note however you like; this just marks it.
 
+## MCP server (for Claude Code agents)
+
+The plugin runs its **own** MCP server — Unix socket + embedded stdio bridge, mirroring
+`vault-mcp` — auto-registered with Claude Code as `vault-skills`. It exposes the same
+capabilities as the commands, for agents to call:
+
+- `vault_skills_validate` — errors/warnings/counts (read-only)
+- `vault_skills_tree` — the current hierarchy (read-only)
+- `vault_skills_export` — write the plugin (then run `/reload-plugins`)
+- `vault_skills_mark` — set vault-skills fields on a note by path
+
+State (socket, discovery, bridge) lives in `~/.claude/vault-skills-mcp/`. If auto-registration
+doesn't happen, register manually:
+
+```bash
+claude mcp add --scope user vault-skills -- node ~/.claude/vault-skills-mcp/bridge.mjs
+```
+
 ## Settings
 
 | Setting | Default | Meaning |
