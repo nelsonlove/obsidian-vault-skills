@@ -1,28 +1,21 @@
-// Pure vault → Claude Code plugin transform.
+// Pure vault → Claude Code plugin transform (frontmatter tree model).
 //
-// Model: a "scope" is an agent that OWNS a set of skills. The exporter compiles a
-// Johnny Decimal vault into a wired cascade:
+// A note declares `type` (skill|agent) and a single `parent` ([[wikilink]], resolved to a
+// path by the caller). The exporter builds a strict tree, validates its edges, and compiles
+// it: each agent owns the skills whose parent is it (preloaded via `skills:`) and delegates
+// to the agents whose parent is it. See docs/spec-frontmatter-tree.md.
 //
-//   00 general vault agent  →  area agents  →  category agents
-//
-//   - each agent preloads the skills in its scope via the `skills:` frontmatter field
-//   - delegation is auto-wired from JD structure (root→areas, area→categories) and
-//     merged with any manual `delegates-to`
-//   - universal (00) skills are owned by the root vault agent; area/category skills by
-//     their area/category agent
-//
-// No `obsidian`/`fs` imports: unit-testable under plain Node. Obsidian glue lives in
-// exporter.ts.
+// No `obsidian`/`fs` imports — unit-testable. Parent wikilinks are resolved to note paths by
+// exporter.ts (Obsidian); this module works purely on those paths.
 
 export type Kind = "skill" | "agent";
-export type Scope = "universal" | "area" | "category";
 
 export interface NoteInput {
-  /** Vault-relative path, POSIX separators. */
   path: string;
   frontmatter: Record<string, unknown>;
-  /** Markdown body with frontmatter stripped. */
   body: string;
+  /** Resolved parent note path(s). 0 ⇒ child of root; 1 ⇒ that parent; >1 ⇒ error. */
+  parentPaths: string[];
 }
 
 export interface Generated {
@@ -33,40 +26,39 @@ export interface Generated {
 }
 
 export interface TransformOptions {
-  /** Plugin name, used to namespace preloaded skill references (e.g. "vault-skills"). */
   pluginName: string;
-  /** Synthesize a default root vault agent if the vault has none. Default true. */
   synthesizeRoot?: boolean;
 }
 
 export interface TransformResult {
   generated: Generated[];
   warnings: string[];
+  errors: string[];
 }
 
-interface Area { code: string; range: string; name: string; }
-interface Category { code: string; name: string; }
-
-interface Rec {
+interface Node {
   kind: Kind;
-  scope: Scope;
-  areaCode: string | null;
-  categoryCode: string | null;
-  areaName: string | null;
-  categoryName: string | null;
-  name: string;
-  base: string;
-  description: string;
+  path: string;
+  isRoot: boolean;
+  parentPaths: string[];
+  nameBase: string;
+  id?: string;
+  label: string;
+  rawDesc: string;
   version?: string;
   tools?: string[];
   model?: string;
   body: string;
-  manualDelegates: string[];
-  from: string;
-  // filled during wiring (agents only):
-  ownedSkills: string[];
-  autoDelegates: string[];
+  // resolved:
+  parent: Node | null;
+  children: Node[];
+  ownedSkills: Node[];
+  level: number;
+  genName: string;
+  valid: boolean;
 }
+
+const SYNTH_ROOT_PATH = " synth-root";
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
@@ -76,12 +68,6 @@ function toolsArray(v: unknown): string[] | undefined {
   return undefined;
 }
 
-function delegateArray(v: unknown): string[] {
-  if (Array.isArray(v)) return v.map(String);
-  if (typeof v === "string" && v.trim()) return [v];
-  return [];
-}
-
 export function slug(s: string): string {
   return String(s).toLowerCase().trim()
     .replace(/&/g, " and ")
@@ -89,29 +75,6 @@ export function slug(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export function deriveFromPath(relPath: string): { area: Area | null; category: Category | null } {
-  const folders = relPath.split("/").filter(Boolean).slice(0, -1);
-  let area: Area | null = null;
-  let category: Category | null = null;
-  for (const seg of folders) {
-    const am = seg.match(/^(\d{2})-(\d{2})\s+(.+)$/);
-    if (am && !area) { area = { code: am[1], range: `${am[1]}-${am[2]}`, name: am[3].trim() }; continue; }
-    const cm = seg.match(/^(\d{2})(?:\.\d+)?\s+(.+)$/);
-    if (cm && area && !category) { category = { code: cm[1], name: cm[2].trim() }; }
-  }
-  return { area, category };
-}
-
-export function resolveScope(fm: Record<string, unknown>, area: Area | null, category: Category | null): Scope {
-  const explicit = fm.scope;
-  if (explicit === "universal" || explicit === "area" || explicit === "category") return explicit;
-  if (area && area.range === "00-09") return "universal";
-  if (category && category.code !== area?.code) return "category";
-  if (area) return "area";
-  return "universal";
-}
-
-/** Minimal YAML serializer. Quotes non-plain scalars; colon-bearing arrays become block lists. */
 export function toYaml(obj: Record<string, unknown>): string {
   const out = ["---"];
   for (const [k, v] of Object.entries(obj)) {
@@ -137,168 +100,155 @@ function provenanceFor(from: string): string {
   return `<!-- generated by obsidian-vault-skills from vault note: ${from}\n     Do not edit here — edit the source note and re-export. -->`;
 }
 
-function scopeLabel(r: Rec): string {
-  if (r.scope === "universal") return r.areaName ?? "vault";
-  if (r.scope === "area") return r.areaName ?? "area";
-  return r.categoryName ?? "category";
-}
-
-function synthRoot(): Rec {
-  return {
-    kind: "agent", scope: "universal", areaCode: "00", categoryCode: null,
-    areaName: "Vault", categoryName: null,
-    name: "00-vault", base: "vault",
-    description: "[Vault] General vault agent — routes a request to the appropriate area agent, which routes on to category agents.",
-    body: "You are the general agent for this vault. Understand each request, identify which Johnny Decimal area it belongs to, and delegate to that area's agent. For cross-area requests, coordinate across areas yourself.",
-    tools: ["Agent"],
-    manualDelegates: [], from: "(synthesized)", ownedSkills: [], autoDelegates: [],
-  };
+function fileBaseOf(path: string): string {
+  return (path.split("/").pop() ?? "").replace(/\.md$/, "");
 }
 
 export function transformAll(notes: NoteInput[], opts: TransformOptions): TransformResult {
   const warnings: string[] = [];
-  const usedNames = new Set<string>();
-  const records: Rec[] = [];
+  const errors: string[] = [];
 
-  // ---- phase 1: parse every note into a record ----
+  // ---- phase 1: parse candidate nodes ----
+  const nodes: Node[] = [];
   for (const note of notes) {
     const fm = note.frontmatter || {};
     const kind: Kind | null = fm.type === "agent" ? "agent" : fm.type === "skill" ? "skill" : null;
     if (!kind) continue;
-
-    const { area, category } = deriveFromPath(note.path);
-    const scope = resolveScope(fm, area, category);
-    const id = String(
-      str(fm.id) ??
-      (scope === "universal" ? "00" : scope === "category" ? category?.code : area?.code) ?? "00",
-    );
-    const breadcrumb = scope === "universal" ? (area ? area.name : "Universal")
-      : scope === "area" ? (area ? area.name : "Area")
-      : `${area ? area.name : "Area"} › ${category ? category.name : ""}`;
-
-    const fileBase = (note.path.split("/").pop() ?? "").replace(/\.md$/, "");
-    const base = slug(str(fm.name) || fileBase);
-    let name = `${id}-${base}`;
-    let n = 2;
-    while (usedNames.has(name)) name = `${id}-${base}-${n++}`;
-    usedNames.add(name);
-
-    const rawDesc = String(str(fm.description) || base.replace(/-/g, " ")).trim();
-    records.push({
-      kind, scope,
-      areaCode: area?.code ?? null,
-      categoryCode: scope === "category" ? (category?.code ?? null) : null,
-      areaName: area?.name ?? null,
-      categoryName: category?.name ?? null,
-      name, base,
-      description: `[${breadcrumb}] ${rawDesc}`,
-      version: str(fm.version), tools: toolsArray(fm.tools), model: str(fm.model),
+    const fileBase = fileBaseOf(note.path);
+    nodes.push({
+      kind,
+      path: note.path,
+      isRoot: fm.root === true,
+      parentPaths: note.parentPaths ?? [],
+      nameBase: slug(str(fm.name) || fileBase),
+      id: str(fm.id),
+      label: str(fm.label) || str(fm.name) || fileBase,
+      rawDesc: String(str(fm.description) || slug(str(fm.name) || fileBase).replace(/-/g, " ")).trim(),
+      version: str(fm.version),
+      tools: toolsArray(fm.tools),
+      model: str(fm.model),
       body: note.body.trim(),
-      manualDelegates: delegateArray(fm["delegates-to"]),
-      from: note.path,
-      ownedSkills: [], autoDelegates: [],
+      parent: null, children: [], ownedSkills: [], level: -1, genName: "", valid: true,
     });
   }
+  const byPath = new Map(nodes.map((n) => [n.path, n]));
 
-  // ---- phase 2: wire the cascade ----
-  const universalAgents = records.filter((r) => r.kind === "agent" && r.scope === "universal");
-  let root: Rec | null = universalAgents[0] ?? null;
-  if (universalAgents.length > 1) warnings.push(`multiple universal agents; using "${root!.name}" as the vault root`);
+  // ---- phase 2: root ----
+  const declaredRoots = nodes.filter((n) => n.isRoot);
+  for (const r of declaredRoots) {
+    if (r.kind !== "agent") { r.valid = false; errors.push(`${r.path}: root must be an agent`); }
+  }
+  const validRoots = declaredRoots.filter((r) => r.valid);
+  for (const extra of validRoots.slice(1)) { extra.valid = false; errors.push(`${extra.path}: multiple roots; ignoring this one`); }
+  let root: Node | null = validRoots[0] ?? null;
   if (!root && opts.synthesizeRoot !== false) {
-    root = synthRoot();
-    records.unshift(root);
-    usedNames.add(root.name);
+    root = {
+      kind: "agent", path: SYNTH_ROOT_PATH, isRoot: true, parentPaths: [],
+      nameBase: "vault", label: "Vault",
+      rawDesc: "General vault agent — routes each request to the appropriate sub-agent.",
+      body: "You are the general agent for this vault. Understand each request and delegate to the appropriate sub-agent; coordinate across sub-agents yourself when a request spans several.",
+      parent: null, children: [], ownedSkills: [], level: 0, genName: "", valid: true,
+    };
+    nodes.unshift(root);
+    byPath.set(root.path, root);
   }
+  if (root) root.level = 0;
 
-  const areaAgents = new Map<string, Rec>();
-  const categoryAgentsByArea = new Map<string, Rec[]>();
-  for (const r of records) {
-    if (r.kind !== "agent") continue;
-    if (r.scope === "area" && r.areaCode) {
-      if (areaAgents.has(r.areaCode)) warnings.push(`multiple area agents for ${r.areaCode}; using "${areaAgents.get(r.areaCode)!.name}"`);
-      else areaAgents.set(r.areaCode, r);
-    } else if (r.scope === "category" && r.areaCode) {
-      const arr = categoryAgentsByArea.get(r.areaCode) ?? [];
-      arr.push(r);
-      categoryAgentsByArea.set(r.areaCode, arr);
+  // ---- phase 3: resolve each node's parent ----
+  for (const n of nodes) {
+    if (n === root) continue;
+    if (n.parentPaths.length > 1) { n.valid = false; errors.push(`${n.path}: multiple parents (strict single-parent)`); continue; }
+    if (n.parentPaths.length === 0) {
+      if (!root) { n.valid = false; errors.push(`${n.path}: no parent and no root`); continue; }
+      n.parent = root; continue;
     }
+    const parent = byPath.get(n.parentPaths[0]);
+    if (!parent) { n.valid = false; errors.push(`${n.path}: unresolved parent ${n.parentPaths[0]}`); continue; }
+    if (parent.kind !== "agent") { n.valid = false; errors.push(`${n.path}: parent is not an agent`); continue; }
+    n.parent = parent;
   }
 
-  // skill ownership by scope
-  for (const r of records) {
-    if (r.kind !== "skill") continue;
-    let owner: Rec | null = null;
-    if (r.scope === "universal") owner = root;
-    else if (r.scope === "area" && r.areaCode) owner = areaAgents.get(r.areaCode) ?? null;
-    else if (r.scope === "category" && r.areaCode) {
-      owner = (categoryAgentsByArea.get(r.areaCode) ?? []).find((a) => a.categoryCode === r.categoryCode) ?? null;
+  // ---- phase 4: validate reachability / cycles / depth; compute level ----
+  for (const n of nodes) {
+    if (!n.valid || n === root) continue;
+    const seen = new Set<string>([n.path]);
+    let cur: Node | null = n.parent;
+    let steps = 1;
+    while (cur && !cur.isRoot) {
+      if (seen.has(cur.path) || !cur.valid) { n.valid = false; break; }
+      seen.add(cur.path);
+      cur = cur.parent;
+      steps++;
     }
-    if (owner) owner.ownedSkills.push(r.name);
-    else warnings.push(`skill "${r.name}" has no owning agent (emitted globally, unowned)`);
+    if (!n.valid) { errors.push(`${n.path}: broken parent chain (cycle or invalid ancestor)`); continue; }
+    if (!cur) { n.valid = false; errors.push(`${n.path}: parent chain does not reach the root`); continue; }
+    n.level = steps;
+    if (n.kind === "agent" && n.level > 4) warnings.push(`${n.path}: agent at level ${n.level} exceeds the depth-5 nesting cap and won't be reachable by live delegation`);
   }
 
-  // delegation: root → all area agents; each area agent → its category agents
-  if (root) root.autoDelegates = [...areaAgents.values()].map((a) => a.name);
-  for (const [areaCode, agent] of areaAgents) {
-    agent.autoDelegates = (categoryAgentsByArea.get(areaCode) ?? []).map((a) => a.name);
+  // ---- phase 5: wire children + ownership from valid nodes ----
+  for (const n of nodes) {
+    if (!n.valid || n === root || !n.parent) continue;
+    if (n.kind === "agent") n.parent.children.push(n);
+    else n.parent.ownedSkills.push(n);
   }
 
-  const agentByBase = new Map<string, string>();
-  for (const r of records) if (r.kind === "agent") agentByBase.set(r.base, r.name);
-  const resolveManual = (d: string): string | null => {
-    const target = d.replace(/\[\[|\]\]/g, "").split("|")[0].trim();
-    return agentByBase.get(slug(target)) ?? null;
+  // ---- phase 6: names (dedup) ----
+  const used = new Set<string>();
+  for (const n of nodes) {
+    if (!n.valid) continue;
+    const base = n.id ? `${n.id}-${n.nameBase}` : n.nameBase;
+    let name = base; let k = 2;
+    while (used.has(name)) name = `${base}-${k++}`;
+    used.add(name);
+    n.genName = name;
+  }
+
+  const breadcrumb = (n: Node): string => {
+    const labels: string[] = [];
+    let cur = n.parent;
+    while (cur && !cur.isRoot) { labels.unshift(cur.label); cur = cur.parent; }
+    return labels.join(" › ");
   };
-  const nameToRec = new Map(records.map((r) => [r.name, r]));
+  const describe = (n: Node): string => {
+    const bc = breadcrumb(n);
+    return bc ? `[${bc}] ${n.rawDesc}` : n.rawDesc;
+  };
 
-  // ---- phase 3: render ----
+  // ---- phase 7: render ----
   const generated: Generated[] = [];
-  for (const r of records) {
-    if (r.kind === "skill") {
-      const fmOut = toYaml({ name: r.name, description: r.description, version: r.version });
-      generated.push({
-        kind: "skill", relOut: `skills/${r.name}/SKILL.md`, from: r.from,
-        content: `${fmOut}\n\n${provenanceFor(r.from)}\n\n${r.body}\n`,
-      });
+  for (const n of nodes) {
+    if (!n.valid) continue;
+
+    if (n.kind === "skill") {
+      const fmOut = toYaml({ name: n.genName, description: describe(n), version: n.version });
+      generated.push({ kind: "skill", relOut: `skills/${n.genName}/SKILL.md`, from: n.path,
+        content: `${fmOut}\n\n${provenanceFor(n.path)}\n\n${n.body}\n` });
       continue;
     }
 
-    // agent: merge auto + manual delegates
-    const manual = r.manualDelegates.map((d) => {
-      const g = resolveManual(d);
-      if (!g) warnings.push(`${r.name}: unresolved delegate ${d}`);
-      return g;
-    }).filter((g): g is string => !!g);
-    const delegates = [...new Set([...r.autoDelegates, ...manual])];
+    // agent
+    let tools = n.tools;
+    if (n.children.length && tools && !tools.includes("Agent")) tools = [...tools, "Agent"];
+    const skillRefs = n.ownedSkills.map((s) => `${opts.pluginName}:${s.genName}`);
+    const fmOut = toYaml({ name: n.genName, description: describe(n), tools, model: n.model, skills: skillRefs });
 
-    let tools = r.tools;
-    if (delegates.length && tools && !tools.includes("Agent")) tools = [...tools, "Agent"];
-
-    const skillRefs = r.ownedSkills.map((n) => `${opts.pluginName}:${n}`);
-    const fmOut = toYaml({ name: r.name, description: r.description, tools, model: r.model, skills: skillRefs });
-
-    let bodyOut = r.body;
+    let bodyOut = n.body;
     if (skillRefs.length) {
       bodyOut += `\n\n## Skills\n\nThese scope skills are preloaded into your context — use them for work in this scope: ${skillRefs.map((s) => `\`${s}\``).join(", ")}.`;
     }
-    if (delegates.length) {
-      const items = delegates.map((dn) => {
-        const dr = nameToRec.get(dn);
-        return dr ? `- \`${dn}\` — ${scopeLabel(dr)}` : `- \`${dn}\``;
-      });
-      const heading = r.scope === "universal"
-        ? "## Vault routing\n\nYou are the general vault agent. Identify which area a request belongs to and delegate to that area's agent via the Agent tool (nested subagents work up to 5 levels deep):"
-        : r.scope === "area"
-          ? "## Delegates to\n\nDelegate category-specific work to the matching category agent via the Agent tool:"
-          : "## Delegates to\n\nSpawn the named agent via the Agent tool for that sub-scope:";
+    if (n.children.length) {
+      const items = n.children.map((c) => `- \`${c.genName}\` — ${c.label}`);
+      const heading = n.isRoot
+        ? "## Vault routing\n\nYou are the general vault agent. Identify which sub-agent a request belongs to and delegate to it via the Agent tool (nested subagents work up to 5 levels deep):"
+        : "## Delegates to\n\nDelegate sub-scope work to the matching agent via the Agent tool:";
       bodyOut += `\n\n${heading}\n${items.join("\n")}`;
     }
 
-    generated.push({
-      kind: "agent", relOut: `agents/${r.name}.md`, from: r.from,
-      content: `${fmOut}\n\n${provenanceFor(r.from)}\n\n${bodyOut}\n`,
-    });
+    const src = n.path === SYNTH_ROOT_PATH ? "(synthesized root)" : n.path;
+    generated.push({ kind: "agent", relOut: `agents/${n.genName}.md`, from: src,
+      content: `${fmOut}\n\n${provenanceFor(src)}\n\n${bodyOut}\n` });
   }
 
-  return { generated, warnings };
+  return { generated, warnings, errors };
 }

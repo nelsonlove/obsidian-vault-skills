@@ -1,96 +1,102 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { transformAll, deriveFromPath, resolveScope, toYaml, slug } from "../src/transform.ts";
+import { transformAll, toYaml, slug } from "../src/transform.ts";
 
-const OPTS = { pluginName: "vault-skills", synthesizeRoot: false };
+const OPTS = { pluginName: "vault-skills", synthesizeRoot: true };
+const note = (path, fm, parentPaths = [], body = "body") => ({ path, frontmatter: fm, body, parentPaths });
 const find = (gen, relOut) => gen.find((g) => g.relOut === relOut);
 
-test("universal skill: 00 prefix, [System] breadcrumb, quoted description", () => {
-  const { generated } = transformAll([{
-    path: "00-09 System/03 LLMs & agents/add-callout.md",
-    frontmatter: { type: "skill", description: "Insert a callout." },
-    body: "# Add a callout\nbody",
-  }], OPTS);
-  const s = find(generated, "skills/00-add-callout/SKILL.md");
-  assert.ok(s);
-  assert.match(s.content, /description: "\[System\] Insert a callout\."/);
-});
-
-test("category agent: prefix + breadcrumb", () => {
-  const { generated } = transformAll([{
-    path: "50-59 Education & research/56 Grants & funding/grant-deadline-sweep.md",
-    frontmatter: { type: "agent", description: "Sweep grant deadlines.", tools: ["Read", "Grep"] },
-    body: "system prompt",
-  }], OPTS);
-  const a = find(generated, "agents/56-grant-deadline-sweep.md");
-  assert.ok(a);
-  assert.match(a.content, /description: "\[Education & research › Grants & funding\] /);
-});
-
-test("X0 management folder collapses to area scope", () => {
-  const { area, category } = deriveFromPath(
-    "50-59 Education & research/50 Management of 50-59 Education & research/research-router.md");
-  assert.equal(resolveScope({}, area, category), "area");
-});
-
-test("skill ownership: category agent preloads its category skill via skills:", () => {
-  const { generated, warnings } = transformAll([
-    {
-      path: "50-59 Education & research/56 Grants & funding/grants.md",
-      frontmatter: { type: "agent", name: "grants", description: "Grants agent.", tools: ["Read"] },
-      body: "grants agent",
-    },
-    {
-      path: "50-59 Education & research/56 Grants & funding/deadline-sweep.md",
-      frontmatter: { type: "skill", name: "deadline-sweep", description: "Sweep deadlines." },
-      body: "sweep",
-    },
+test("root → area → category cascade wired by parent; Agent tool appended", () => {
+  const { generated, errors } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("area.md", { type: "agent", name: "research", label: "Education & research", tools: ["Read"] }, ["root.md"]),
+    note("cat.md", { type: "agent", name: "grants", label: "Grants & funding" }, ["area.md"]),
   ], OPTS);
-  const agent = find(generated, "agents/56-grants.md");
-  assert.ok(agent);
-  assert.match(agent.content, /skills:\n\s+- "vault-skills:56-deadline-sweep"/, "owned skill preloaded, namespaced");
-  assert.equal(warnings.filter((w) => w.includes("no owning agent")).length, 0);
-});
-
-test("auto-cascade: root → area agents → category agents, with Agent tool added when tools listed", () => {
-  const { generated } = transformAll([
-    { path: "00-09 System/03 LLMs & agents/vault.md", frontmatter: { type: "agent", name: "vault", description: "Root." }, body: "root" },
-    { path: "50-59 Education & research/50 Management of 50-59 Education & research/research.md", frontmatter: { type: "agent", name: "research", description: "Area.", tools: ["Read"] }, body: "area" },
-    { path: "50-59 Education & research/56 Grants & funding/grants.md", frontmatter: { type: "agent", name: "grants", description: "Cat." }, body: "cat" },
-  ], OPTS);
-
-  const root = find(generated, "agents/00-vault.md");
-  const area = find(generated, "agents/50-research.md");
+  assert.equal(errors.length, 0);
+  const root = find(generated, "agents/vault.md");
+  const area = find(generated, "agents/research.md");
   assert.match(root.content, /## Vault routing/);
-  assert.match(root.content, /- `50-research` — Education & research/, "root delegates to area agent");
-  assert.doesNotMatch(root.content, /^tools:/m, "authored root has no tools -> inherits all (incl. Agent)");
-  assert.match(area.content, /tools: \[Read, Agent\]/, "Agent appended to area agent's listed tools");
-  assert.match(area.content, /- `56-grants` — Grants & funding/, "area delegates to category agent");
+  assert.match(root.content, /- `research` — Education & research/);
+  assert.match(area.content, /tools: \[Read, Agent\]/);
+  assert.match(area.content, /- `grants` — Grants & funding/);
 });
 
-test("synthesizeRoot creates a 00-vault agent when the vault has none", () => {
+test("skill ownership via parent → preloaded, namespaced, into the owning agent", () => {
   const { generated } = transformAll([
-    { path: "50-59 Education & research/50 Management of 50-59 Education & research/research.md", frontmatter: { type: "agent", name: "research", description: "Area." }, body: "area" },
-  ], { pluginName: "vault-skills", synthesizeRoot: true });
-  const root = find(generated, "agents/00-vault.md");
-  assert.ok(root, "synthetic root generated");
-  assert.match(root.content, /- `50-research` — Education & research/);
-});
-
-test("manual delegates-to still works and merges with auto-wiring", () => {
-  const { generated, warnings } = transformAll([
-    { path: "90-99 Vault testbed/90 Management of 90-99 Vault testbed/r.md", frontmatter: { type: "agent", name: "r", description: "x", "delegates-to": ["[[echo]]"] }, body: "r" },
-    { path: "90-99 Vault testbed/95 Testbed skills/echo.md", frontmatter: { type: "skill", name: "echo", description: "e" }, body: "e" },
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("grants.md", { type: "agent", name: "grants" }, ["root.md"]),
+    note("sweep.md", { type: "skill", name: "deadline-sweep" }, ["grants.md"]),
   ], OPTS);
-  // echo is a skill (not an agent) -> unresolved manual delegate warning
-  assert.ok(warnings.some((w) => /unresolved delegate/.test(w)));
+  const grants = find(generated, "agents/grants.md");
+  assert.match(grants.content, /skills:\n\s+- "vault-skills:deadline-sweep"/);
+  assert.ok(find(generated, "skills/deadline-sweep/SKILL.md"));
 });
 
-test("toYaml: quotes leading-[ strings; bare names stay plain; colon arrays become block lists", () => {
-  assert.equal(toYaml({ name: "56-x" }), "---\nname: 56-x\n---");
+test("shared skill at level 0 (no parent) is owned by the root", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("callout.md", { type: "skill", name: "add-callout" }, []),
+  ], OPTS);
+  assert.match(find(generated, "agents/vault.md").content, /skills:\n\s+- "vault-skills:add-callout"/);
+});
+
+test("synthesized root when none is declared", () => {
+  const { generated } = transformAll([
+    note("area.md", { type: "agent", name: "research", label: "Research" }, []),
+  ], OPTS);
+  const root = find(generated, "agents/vault.md");
+  assert.ok(root, "synthetic vault root");
+  assert.match(root.content, /- `research` — Research/);
+});
+
+test("strict single parent: a list of parents is an error, node not rendered", () => {
+  const { generated, errors } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("a.md", { type: "agent", name: "a" }, ["root.md"]),
+    note("bad.md", { type: "skill", name: "bad" }, ["root.md", "a.md"]),
+  ], OPTS);
+  assert.ok(errors.some((e) => /multiple parents/.test(e)));
+  assert.equal(find(generated, "skills/bad/SKILL.md"), undefined);
+});
+
+test("unresolved parent is an error", () => {
+  const { errors } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("orphan.md", { type: "skill", name: "orphan" }, ["missing.md"]),
+  ], OPTS);
+  assert.ok(errors.some((e) => /unresolved parent/.test(e)));
+});
+
+test("parent that is a skill is an error", () => {
+  const { errors } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("s.md", { type: "skill", name: "s" }, ["root.md"]),
+    note("bad.md", { type: "agent", name: "bad" }, ["s.md"]),
+  ], OPTS);
+  assert.ok(errors.some((e) => /parent is not an agent/.test(e)));
+});
+
+test("cycle is detected", () => {
+  const { errors } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("a.md", { type: "agent", name: "a" }, ["b.md"]),
+    note("b.md", { type: "agent", name: "b" }, ["a.md"]),
+  ], OPTS);
+  assert.ok(errors.some((e) => /broken parent chain|does not reach/.test(e)));
+});
+
+test("depth beyond level 4 warns (nesting cap)", () => {
+  const notes = [note("root.md", { type: "agent", name: "vault", root: true })];
+  let prev = "root.md";
+  for (let i = 1; i <= 5; i++) { const p = `l${i}.md`; notes.push(note(p, { type: "agent", name: `l${i}` }, [prev])); prev = p; }
+  const { warnings } = transformAll(notes, OPTS);
+  assert.ok(warnings.some((w) => /exceeds the depth-5/.test(w)));
+});
+
+test("toYaml: quotes leading-[ and colon arrays; bare names stay plain", () => {
+  assert.equal(toYaml({ name: "grants" }), "---\nname: grants\n---");
   assert.match(toYaml({ description: "[X] y" }), /description: "\[X\] y"/);
-  assert.match(toYaml({ skills: ["vault-skills:56-x"] }), /skills:\n\s+- "vault-skills:56-x"/);
-  assert.match(toYaml({ tools: ["Read", "Grep"] }), /tools: \[Read, Grep\]/);
+  assert.match(toYaml({ skills: ["vault-skills:x"] }), /skills:\n\s+- "vault-skills:x"/);
 });
 
 test("slug normalizes ampersands and punctuation", () => {
@@ -98,8 +104,6 @@ test("slug normalizes ampersands and punctuation", () => {
 });
 
 test("notes without type: skill|agent are ignored", () => {
-  const { generated } = transformAll([
-    { path: "10-19 Personal/11 x/note.md", frontmatter: { title: "just a note" }, body: "x" },
-  ], OPTS);
+  const { generated } = transformAll([note("n.md", { title: "x" }, [])], { pluginName: "vault-skills", synthesizeRoot: false });
   assert.equal(generated.length, 0);
 });

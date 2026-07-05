@@ -1,0 +1,86 @@
+# Spec: frontmatter tree model
+
+Replaces folder/Johnny-Decimal-derived structure with an explicit **frontmatter tree**.
+A note declares its `type` and a single `parent`; the exporter builds a strict tree,
+validates its edges, and compiles it into the wired Claude Code plugin (each agent owns
+its skills; `root → … → leaf` delegation). Folders become purely organizational.
+
+## Discovery
+
+- A note is a candidate iff frontmatter `type` ∈ {`skill`, `agent`}.
+- Location in the vault is irrelevant to structure.
+
+## Frontmatter fields
+
+| Field | Req | Applies | Meaning |
+|---|---|---|---|
+| `type` | **yes** | both | `skill` or `agent`. |
+| `parent` | no¹ | both | A **single** `[[wikilink]]` to the parent **agent**. Omit ⇒ parent is the root. A **list ⇒ error** (strict single parent). |
+| `root` | no | agent | `true` marks the one root agent. |
+| `description` | rec | both | Trigger text. |
+| `name` | no | both | Base name override (default: filename slug). |
+| `id` | no | both | Name-prefix override, e.g. `56` → `56-<slug>`. Default: no prefix. |
+| `label` | no | both | Display label used in breadcrumbs (default: name). |
+| `tools` | no | agent | Tool allowlist; `Agent` appended automatically if it has child agents. |
+| `model` | no | agent | Model. |
+| `version` | no | skill | Skill version. |
+
+¹ Omitting `parent` means "child of the root" — it is not an error.
+
+## Tree construction
+
+1. Parse candidates into nodes keyed by note path.
+2. Resolve each `parent` wikilink to a target note **path** (Obsidian resolves; the pure
+   transform receives resolved paths).
+3. **Root** = the node with `root: true`. If none → **synthesize** a `vault` root agent
+   (level 0). If more than one → error on the extras, first wins.
+4. Each non-root node's parent = its resolved parent node, or the root if `parent` omitted.
+5. **Level** = distance from root (root = 0). Not declared; computed.
+
+## Strict single parent + shared-skill rule
+
+- `parent` must resolve to **exactly one agent**. A list, or multiple resolutions, is an
+  **error** (node skipped + warning).
+- There is **no multi-parent**. To share a skill across agents, give it **no parent** ⇒ it
+  lands at **level 0**, owned by the root. Level-0 skills are universal: preloaded into the
+  root and globally invokable by any agent (a plugin's skills are a global namespace). This
+  is the *only* sharing mechanism — single-parent structurally enforces it.
+
+## Validation pass
+
+Errors skip the node and warn; warnings advise.
+
+1. **Resolves** — unresolved `parent` wikilink ⇒ error.
+2. **Parent is an agent** — parent resolves to a skill ⇒ error.
+3. **Single parent** — list / >1 resolution ⇒ error.
+4. **One root** — 0 ⇒ synthesize; >1 ⇒ error on extras (first wins).
+5. **Acyclic** — a cycle in the parent chain ⇒ error (cycle members skipped).
+6. **Depth ≤ 5** — an agent at level > 4 ⇒ warn (delegation past the depth-5 nested-subagent
+   cap won't spawn). Skills don't count toward depth.
+7. **Reachable** — a node whose chain doesn't reach the root ⇒ error.
+
+## Compilation
+
+- **Name** = `id ? "<id>-<slug>" : "<slug>"` of `name || filename`, deduped (`-2`, `-3`, …).
+- **Breadcrumb** = `label`s of ancestor agents from just-below-root down to the parent,
+  joined ` › ` (omitted at level ≤ 1). **Description** = `[<breadcrumb>] <rawDesc>`.
+- **Skill** → `skills/<name>/SKILL.md` (global namespace).
+- **Agent** → `agents/<name>.md`:
+  - `skills:` = namespaced refs (`<plugin>:<name>`) of skills whose parent is this agent.
+  - `tools` = authored tools (+ `Agent` when it has child agents).
+  - Delegation set = agents whose parent is this agent.
+  - Body += a **Skills** note (what's preloaded) and a routing section — **Vault routing**
+    for the root, **Delegates to** for others — listing children by label.
+- **Synthesized root**: name `vault`, generic router body, owns level-0 skills, delegates
+  to level-1 agents.
+
+## Removed vs. the JD model
+
+`scope`, JD path parsing, area/category terminology, the levels/regex config, and
+`delegates-to` (superseded by `parent`). The tree is fully defined by `parent` + `root`.
+
+## Depth note
+
+Levels 0–4 = agent depths 1–5 below the main conversation = exactly the nested-subagent
+cap. Level 4 is the deepest that still spawns; deeper agents preload/exist but can't be
+reached by live delegation.

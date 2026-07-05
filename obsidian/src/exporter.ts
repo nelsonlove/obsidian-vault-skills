@@ -16,12 +16,30 @@ export interface ExportSummary {
   agents: number;
   removed: number;
   warnings: string[];
+  errors: string[];
   outputDir: string;
 }
 
 /** Strip a single leading YAML frontmatter block. */
 function stripFrontmatter(content: string): string {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "");
+}
+
+/** Extract link targets from a frontmatter `parent` value (string or list). */
+function parentLinkpaths(v: unknown): string[] {
+  const arr = Array.isArray(v) ? v : v == null ? [] : [v];
+  return arr.map(String)
+    .map((s) => s.replace(/\[\[|\]\]/g, "").split("|")[0].split("#")[0].trim())
+    .filter(Boolean);
+}
+
+/** Resolve each parent wikilink to a target note path; unresolved links get a marker
+ *  that won't match any node (so the transform reports them as broken edges). */
+function resolveParents(app: App, sourcePath: string, v: unknown): string[] {
+  return parentLinkpaths(v).map((lp) => {
+    const dest = app.metadataCache.getFirstLinkpathDest(lp, sourcePath);
+    return dest ? dest.path : `⟂unresolved:${lp}`;
+  });
 }
 
 /** Collect every note whose frontmatter marks it a skill/agent (via the metadata cache). */
@@ -31,14 +49,19 @@ export async function collectNotes(app: App): Promise<NoteInput[]> {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter;
     if (!fm || (fm.type !== "skill" && fm.type !== "agent")) continue;
     const raw = await app.vault.cachedRead(file);
-    notes.push({ path: file.path, frontmatter: fm as Record<string, unknown>, body: stripFrontmatter(raw) });
+    notes.push({
+      path: file.path,
+      frontmatter: fm as Record<string, unknown>,
+      body: stripFrontmatter(raw),
+      parentPaths: resolveParents(app, file.path, (fm as Record<string, unknown>).parent),
+    });
   }
   return notes;
 }
 
 export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
   const notes = await collectNotes(app);
-  const { generated, warnings } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true });
+  const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true });
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription);
 
@@ -73,6 +96,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     agents: generated.filter((g) => g.kind === "agent").length,
     removed: toRemove.length,
     warnings,
+    errors,
     outputDir: opts.outputDir,
   };
 }

@@ -52,17 +52,19 @@ export default class VaultSkillsPlugin extends Plugin {
         else if (r.status === "error") symlinkNote = `\n⚠ symlink error: ${r.detail}`;
       }
 
-      const warn = summary.warnings.length
-        ? `\n${summary.warnings.length} warning(s): ${summary.warnings[0]}${summary.warnings.length > 1 ? " …" : ""}`
-        : "";
+      const issue = (label: string, items: string[]) =>
+        items.length ? `\n${items.length} ${label}: ${items[0]}${items.length > 1 ? " …" : ""}` : "";
+      const err = issue("error(s)", summary.errors);
+      const warn = issue("warning(s)", summary.warnings);
 
       new Notice(
         `Vault Skills: exported ${summary.skills} skill(s) + ${summary.agents} agent(s)` +
           (summary.removed ? `, removed ${summary.removed}` : "") +
           symlinkNote +
+          err +
           warn +
           `\nRun /reload-plugins in Claude Code to load.`,
-        quiet ? 4000 : 8000,
+        quiet ? 4000 : summary.errors.length ? 12000 : 8000,
       );
     } catch (e) {
       new Notice(`Vault Skills: export failed — ${e instanceof Error ? e.message : String(e)}`, 10000);
