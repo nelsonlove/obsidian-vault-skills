@@ -7,7 +7,8 @@ export function expandTilde(p: string): string {
   return p;
 }
 
-/** Default Claude Code plugin dir this exporter writes into (the monorepo's claude-code/). */
+/** Default output dir: Claude Code's skills-dir load location, so the exporter writes the
+ *  plugin straight into where Claude Code loads it — no symlink needed. */
 export function defaultOutputDir(): string {
-  return path.join(os.homedir(), "repos", "vault-skills", "claude-code");
+  return path.join(os.homedir(), ".claude", "skills", "vault-skills");
 }

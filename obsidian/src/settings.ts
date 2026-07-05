@@ -8,7 +8,7 @@ export interface VaultSkillsSettings {
 }
 
 export const DEFAULT_SETTINGS: VaultSkillsSettings = {
-  outputDir: "~/repos/vault-skills/claude-code",
+  outputDir: "~/.claude/skills/vault-skills",
   pluginName: "vault-skills",
   exportOnSave: false,
 };

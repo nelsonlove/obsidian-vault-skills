@@ -2,6 +2,7 @@ import type { App } from "obsidian";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { transformAll, type NoteInput } from "./transform.js";
+import { STATIC_FILES } from "./static-skills.js";
 
 const MANIFEST_NAME = ".vault-skills-manifest.json";
 
@@ -73,7 +74,15 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   let prev: string[] = [];
   try { prev = JSON.parse(fs.readFileSync(manifestPath, "utf8")).files ?? []; } catch { /* no prior manifest */ }
 
-  const nextFiles = generated.map((g) => g.relOut);
+  // Emit generated content plus the shipped static skills (static wins on name collision),
+  // so one export yields the complete plugin at the output dir — no separate symlink.
+  const staticRelOuts = new Set(STATIC_FILES.map((s) => s.relOut));
+  const files = [
+    ...generated.filter((g) => !staticRelOuts.has(g.relOut)),
+    ...STATIC_FILES.map((s) => ({ kind: "skill" as const, relOut: s.relOut, content: s.content, from: "(static)" })),
+  ];
+
+  const nextFiles = files.map((g) => g.relOut);
   const toRemove = prev.filter((p) => !nextFiles.includes(p));
   for (const rel of toRemove) {
     const abs = path.join(opts.outputDir, rel);
@@ -82,7 +91,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     try { if (fs.readdirSync(parent).length === 0) fs.rmdirSync(parent); } catch { /* ignore */ }
   }
 
-  for (const g of generated) {
+  for (const g of files) {
     const abs = path.join(opts.outputDir, g.relOut);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, g.content);
@@ -91,13 +100,13 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   fs.writeFileSync(manifestPath, JSON.stringify({
     generatedFrom: "obsidian-vault-skills",
     vault: vaultPath ?? null,
-    count: generated.length,
+    count: files.length,
     files: nextFiles.sort(),
   }, null, 2) + "\n");
 
   return {
-    skills: generated.filter((g) => g.kind === "skill").length,
-    agents: generated.filter((g) => g.kind === "agent").length,
+    skills: files.filter((g) => g.kind === "skill").length,
+    agents: files.filter((g) => g.kind === "agent").length,
     removed: toRemove.length,
     warnings,
     errors,

@@ -10,16 +10,10 @@ and agents exported from your Obsidian vault by the [`../obsidian`](../obsidian)
 
 ## How it gets loaded
 
-The Obsidian exporter writes here (its default output dir). To load it, symlink this dir
-into Claude Code's skills directory **once** — the Obsidian plugin does *not* create this
-link (it only ever writes its own output dir):
-
-```
-ln -s <repo>/claude-code ~/.claude/skills/vault-skills
-```
-
-Claude Code then loads it in place as `vault-skills@skills-dir`. After each export, run
-`/reload-plugins`.
+By default the exporter writes the plugin straight to `~/.claude/skills/vault-skills`
+(Claude Code's load location), so **no symlink is needed**. This directory is just a
+reference scaffold / an optional alternate output target — if you point the exporter here,
+symlink it into `~/.claude/skills` once (`vault-skills@skills-dir`), then `/reload-plugins`.
 
 Skills invoke as `/vault-skills:<name>`; agents as `vault-skills:<name>`. The exporter
 builds a tree from each note's `parent` edge — every agent owns its skills (preloaded)

@@ -3,12 +3,11 @@
 Author skills and agents as ordinary notes in your Obsidian vault, and publish them as a
 native **Claude Code** plugin — from inside Obsidian, one click.
 
-This is the **producer** half of the [monorepo](../README.md); it writes into the
-[`../claude-code`](../claude-code) landing plugin. It runs the exporter natively in
-TypeScript over Obsidian's metadata cache (no file walk, no YAML parsing). It writes only
-inside its configured output dir (the plugin's own dir) — it never creates symlinks or
-files *elsewhere* in `~/.claude`. Getting that dir loaded by Claude Code is a one-time
-user setup (below).
+This is the **producer** half of the [monorepo](../README.md): it runs the exporter
+natively in TypeScript over Obsidian's metadata cache (no file walk, no YAML parsing) and
+writes the Claude Code plugin — by default straight into `~/.claude/skills/vault-skills`,
+Claude Code's load location. It writes only inside its configured output dir (the plugin's
+own dir); it never creates symlinks or files *elsewhere* in `~/.claude`.
 
 ## What it does
 
@@ -19,11 +18,11 @@ user setup (below).
 3. **Compile** — emit `skills/<name>/SKILL.md` and `agents/<name>.md`, wiring each agent's
    owned skills (`skills:` preload) and its child agents (delegation), overwriting
    idempotently via a manifest.
-4. **Stop there** — the plugin does *not* load anything or reach outside its output dir.
-   Loading is a one-time user setup: either point the output dir directly at a
-   `~/.claude/skills/<name>` location, or symlink the output dir into `~/.claude/skills`
-   yourself. After that, each export updates it in place and you just run `/reload-plugins`
-   (which the plugin can't do — no channel into a running Claude Code session).
+4. **Load it** — the default output **is** `~/.claude/skills/vault-skills`, so the export
+   lands right where Claude Code loads from — **no symlink needed**. Just run
+   `/reload-plugins` (the one step the plugin can't do — no channel into a running Claude
+   Code session). The plugin only ever writes its own output dir; if you point it
+   elsewhere, link/install that dir into `~/.claude/skills` yourself.
 
 ## The model: a scope is an agent that owns skills
 
@@ -87,7 +86,7 @@ command **"Export skills & agents to Claude Code"**, and `/reload-plugins` in Cl
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Output plugin directory | `~/repos/vault-skills/claude-code` | Where the generated Claude Code plugin is written (the monorepo's landing plugin). |
+| Output plugin directory | `~/.claude/skills/vault-skills` | Where the plugin is written — defaults to Claude Code's load location (no symlink needed). |
 | Plugin name | `vault-skills` | CC plugin name / command & subagent namespace. |
 | Export on save | off | Re-export when a skill/agent note changes. |
 
