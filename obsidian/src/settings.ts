@@ -5,7 +5,7 @@ export interface VaultSkillsSettings {
   outputDir: string;
   pluginName: string;
   exportOnSave: boolean;
-  fieldMode: "bare" | "prefix" | "nested";
+  fieldMode: "prefix" | "nested";
   fieldPrefix: string;
   fieldKey: string;
 }
@@ -14,8 +14,8 @@ export const DEFAULT_SETTINGS: VaultSkillsSettings = {
   outputDir: "~/.claude/skills/vault-skills",
   pluginName: "vault-skills",
   exportOnSave: false,
-  fieldMode: "bare",
-  fieldPrefix: "vs-",
+  fieldMode: "prefix",
+  fieldPrefix: "", // blank prefix = bare top-level fields (type, parent, …)
   fieldKey: "vault-skills",
 };
 
@@ -60,34 +60,37 @@ export class VaultSkillsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Frontmatter field mode")
-      .setDesc("How vault-skills fields are namespaced, to avoid colliding with existing frontmatter (e.g. your own `description`/`type`). bare: type/parent/… · prefix: <prefix>type/… · nested: under one key.")
+      .setDesc("How vault-skills fields are namespaced, to avoid colliding with existing frontmatter. prefix: <prefix>type/… (leave the prefix blank for bare top-level fields). nested: all fields under one key.")
       .addDropdown((d) =>
-        d.addOptions({ bare: "bare", prefix: "prefix", nested: "nested" })
+        d.addOptions({ prefix: "prefix", nested: "nested" })
           .setValue(this.plugin.settings.fieldMode)
           .onChange(async (v) => {
-            this.plugin.settings.fieldMode = v as "bare" | "prefix" | "nested";
+            this.plugin.settings.fieldMode = v as "prefix" | "nested";
             await this.plugin.saveSettings();
+            this.display(); // re-render so the relevant field (prefix vs key) shows
           }),
       );
 
-    new Setting(containerEl)
-      .setName("Field prefix")
-      .setDesc('For "prefix" mode, e.g. "vs-" → vs-type, vs-parent. Keeps fields top-level, so the parent wikilink still gets backlinks/graph edges.')
-      .addText((t) =>
-        t.setValue(this.plugin.settings.fieldPrefix).onChange(async (v) => {
-          this.plugin.settings.fieldPrefix = v;
-          await this.plugin.saveSettings();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Field key")
-      .setDesc('For "nested" mode, e.g. "vault-skills" → all fields under that key. Note: a nested parent wikilink may not get Obsidian backlinks/graph edges, and the Properties UI won\'t edit nested objects.')
-      .addText((t) =>
-        t.setValue(this.plugin.settings.fieldKey).onChange(async (v) => {
-          this.plugin.settings.fieldKey = v;
-          await this.plugin.saveSettings();
-        }),
-      );
+    if (this.plugin.settings.fieldMode === "prefix") {
+      new Setting(containerEl)
+        .setName("Field prefix")
+        .setDesc('Prefixes each field, e.g. "vs-" → vs-type, vs-parent. Leave blank for bare top-level fields (type, parent, …). Keeps fields top-level, so the parent wikilink keeps backlinks/graph edges.')
+        .addText((t) =>
+          t.setValue(this.plugin.settings.fieldPrefix).onChange(async (v) => {
+            this.plugin.settings.fieldPrefix = v;
+            await this.plugin.saveSettings();
+          }),
+        );
+    } else {
+      new Setting(containerEl)
+        .setName("Field key")
+        .setDesc('Nests all fields under this key, e.g. "vault-skills". Note: a nested parent wikilink may not get Obsidian backlinks/graph edges, and the Properties UI won\'t edit nested objects.')
+        .addText((t) =>
+          t.setValue(this.plugin.settings.fieldKey).onChange(async (v) => {
+            this.plugin.settings.fieldKey = v;
+            await this.plugin.saveSettings();
+          }),
+        );
+    }
   }
 }

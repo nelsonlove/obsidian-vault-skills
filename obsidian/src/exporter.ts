@@ -8,12 +8,12 @@ const MANIFEST_NAME = ".vault-skills-manifest.json";
 
 /** How the vault-skills fields are namespaced in a note's frontmatter. */
 export interface FieldConfig {
-  mode: "bare" | "prefix" | "nested";
+  mode: "prefix" | "nested";
   prefix: string; // e.g. "vs-" → vs-type, vs-parent (prefix mode)
   key: string;    // e.g. "vault-skills" → nested object (nested mode)
 }
 
-export const DEFAULT_FIELDS: FieldConfig = { mode: "bare", prefix: "vs-", key: "vault-skills" };
+export const DEFAULT_FIELDS: FieldConfig = { mode: "prefix", prefix: "", key: "vault-skills" };
 
 export interface ExportOptions {
   outputDir: string;
@@ -59,16 +59,14 @@ const VS_FIELDS = ["type", "root", "name", "id", "label", "description", "versio
 /** Extract a bare view of the vault-skills fields (+ the raw parent value) per the field mode,
  *  so the pure transform stays namespace-agnostic. */
 function fieldView(fm: Record<string, unknown>, cfg: FieldConfig): { view: Record<string, unknown>; parent: unknown } {
-  if (cfg.mode === "prefix") {
-    const view: Record<string, unknown> = {};
-    for (const f of VS_FIELDS) view[f] = fm[cfg.prefix + f];
-    return { view, parent: fm[cfg.prefix + "parent"] };
-  }
   if (cfg.mode === "nested") {
     const nested = (fm[cfg.key] && typeof fm[cfg.key] === "object" ? fm[cfg.key] : {}) as Record<string, unknown>;
     return { view: nested, parent: nested.parent };
   }
-  return { view: fm, parent: fm.parent }; // bare
+  // prefix mode — a blank prefix yields bare top-level fields (type, parent, …)
+  const view: Record<string, unknown> = {};
+  for (const f of VS_FIELDS) view[f] = fm[cfg.prefix + f];
+  return { view, parent: fm[cfg.prefix + "parent"] };
 }
 
 /** Collect every note whose (namespaced) frontmatter marks it a skill/agent/policy. */
@@ -180,13 +178,11 @@ export function markFrontmatter(input: MarkInput, fields: FieldConfig = DEFAULT_
   if (input.root) flat.root = true;
   if (input.parent) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
   if (input.description) flat.description = input.description;
-  if (fields.mode === "prefix") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(flat)) out[fields.prefix + k] = v;
-    return out;
-  }
   if (fields.mode === "nested") return { [fields.key]: flat };
-  return flat;
+  // prefix mode — a blank prefix yields bare top-level fields
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(flat)) out[fields.prefix + k] = v;
+  return out;
 }
 
 /** Make sure the output dir is a valid Claude Code plugin (create manifest if absent). */

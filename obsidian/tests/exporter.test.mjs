@@ -72,7 +72,7 @@ test("analyzeVault returns tree + counts + no errors for a valid vault", async (
 
 test("markFrontmatter honors the field mode", () => {
   const input = { type: "agent", parent: "research" };
-  assert.deepEqual(markFrontmatter(input, { mode: "bare", prefix: "vs-", key: "vault-skills" }),
+  assert.deepEqual(markFrontmatter(input, { mode: "prefix", prefix: "", key: "vault-skills" }),
     { type: "agent", parent: "[[research]]" });
   assert.deepEqual(markFrontmatter(input, { mode: "prefix", prefix: "vs-", key: "" }),
     { "vs-type": "agent", "vs-parent": "[[research]]" });
