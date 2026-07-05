@@ -1,63 +1,68 @@
 # Vault Skills (Obsidian plugin)
 
-Author skills and agents as ordinary notes in your Obsidian (Johnny Decimal) vault,
-and publish them as a native **Claude Code** plugin — from inside Obsidian, one click.
+Author skills and agents as ordinary notes in your Obsidian vault, and publish them as a
+native **Claude Code** plugin — from inside Obsidian, one click.
 
-This is the authoring-side companion to the `vault-skills` Claude Code plugin. It
-reimplements the vault → plugin exporter natively in TypeScript over Obsidian's
-metadata cache (no file walk, no YAML parsing), and manages the one symlink that lets
-Claude Code load the result in place.
+This is the **producer** half of the [monorepo](../README.md); it writes into the
+[`../claude-plugin`](../claude-plugin) landing plugin. It runs the exporter natively in
+TypeScript over Obsidian's metadata cache (no file walk, no YAML parsing) and manages the
+one symlink that lets Claude Code load the result in place.
 
 ## What it does
 
-1. **Discover** — every note whose frontmatter has `type: skill` or `type: agent`
-   (found instantly via `app.metadataCache`).
-2. **Transform** — derive Johnny Decimal area/category from the note's folder path;
-   flatten into a Claude Code plugin's flat namespace, encoding origin as a name prefix
-   (`56-grant-deadline-sweep`) and a description breadcrumb (`[Education & research › Grants & funding] …`).
-3. **Write** — emit `skills/<name>/SKILL.md` and `agents/<name>.md` into the output
-   plugin directory, overwriting idempotently via a manifest.
+1. **Discover** — every note whose frontmatter has `type: skill` or `type: agent` (via
+   `app.metadataCache`). Folders don't matter — structure comes from frontmatter.
+2. **Build the tree** — resolve each note's single `parent` wikilink into a strict tree,
+   and **validate** its edges (see below).
+3. **Compile** — emit `skills/<name>/SKILL.md` and `agents/<name>.md`, wiring each agent's
+   owned skills (`skills:` preload) and its child agents (delegation), overwriting
+   idempotently via a manifest.
 4. **Link** — ensure `~/.claude/skills/<plugin-name>` → the output directory, so Claude
    Code loads it in place. Then you run `/reload-plugins` (the one step the plugin can't
    do for you — there's no channel into a running Claude Code session).
 
-## Scope = agent + owned skills
+## The model: a scope is an agent that owns skills
 
-A scope isn't a bag of skills — it's an **agent that owns a skill set**. The exporter
-compiles the vault into a wired cascade:
+A note declares its `type` and a single `parent` (a `[[wikilink]]`). From those edges the
+exporter builds the tree and compiles a cascade:
 
 ```
-00 general vault agent  →  area agents  →  category agents
+root vault agent  →  child agents  →  grandchild agents   (delegation, up to 5 levels)
 ```
 
-- **Auto-wired delegation** — the root vault agent delegates to every area agent, each
-  area agent to its category agents (derived from the JD structure; `Agent` tool added
-  automatically; nested subagents work up to 5 levels deep). Manual `delegates-to`
-  wikilinks are still honored and merged in.
-- **Skill ownership via preload** — each agent gets a `skills:` frontmatter list of the
-  skills in its scope, so their full content is preloaded into that agent at spawn.
-  Universal (00) skills belong to the root; area skills to area agents; category skills
-  to category agents.
-- **Synthesized root** — if the vault has no universal agent, a `00-vault` router is
-  generated so the cascade always has an entry point.
+- **Ownership** — a skill's `parent` is the agent that **owns** it; that agent preloads it
+  via the `skills:` frontmatter field (full body injected at spawn).
+- **Delegation** — an agent's `parent` is the agent that **delegates to** it; the parent
+  gets the `Agent` tool and a routing section listing its children.
+- **Sharing = level 0** — strictly one parent. To share a skill across agents, give it **no
+  `parent`** — it lands at level 0, owned by the root and globally invokable. That's the
+  only sharing mechanism.
+- **Synthesized root** — if no note has `root: true`, a `vault` root is generated so the
+  cascade always has an entry point.
+- **Validation** — unresolved / wrong-type / multiple parents, cycles, unreachable nodes,
+  and depth past the 5-level nesting cap are reported (errors skip the node; warnings
+  advise) in the export notice.
 
-> Note: the `skills:` reference format for plugin skills (`vault-skills:56-x` vs bare
-> `56-x`) isn't pinned down in the docs — this exporter emits the namespaced form; if a
-> live test shows preload doesn't fire, switch to bare names (one line in `transform.ts`).
+Full rules and field reference: [`../docs/spec-frontmatter-tree.md`](../docs/spec-frontmatter-tree.md)
+and [`../docs/frontmatter-convention.md`](../docs/frontmatter-convention.md).
 
-## Note convention
+> The `skills:` reference format for plugin skills (`vault-skills:<name>` vs bare
+> `<name>`) isn't pinned down in the Claude Code docs — the exporter emits the namespaced
+> form; if a live test shows preload doesn't fire, switch to bare names (one line in
+> `src/transform.ts`).
+
+## Note convention (short)
 
 ```yaml
 ---
-type: skill        # or: agent  (required; other notes are ignored)
-description: ...    # trigger text Claude uses
-# optional: name, scope, id, version, tools: [Read, Grep], model, delegates-to: ["[[other-note]]"]
+type: agent          # or: skill  (required; other notes are ignored)
+parent: "[[research]]"   # single wikilink to the parent agent; omit ⇒ child of root
+# root: true             # marks the one root agent
+description: ...          # trigger text
+# optional: name, id, label, version, tools: [Read, Grep], model
 ---
 Body = the SKILL.md body / agent system prompt.
 ```
-
-Scope is derived from the JD path: notes under `00-09 …` → universal; a note in an area's
-`X0` management folder → area scope; a note in a real category folder → category scope.
 
 ## Build & install
 
@@ -69,25 +74,19 @@ npm test               # tsc --noEmit + unit tests
 # install into your vault
 mkdir -p "<vault>/.obsidian/plugins/vault-skills"
 cp manifest.json main.js "<vault>/.obsidian/plugins/vault-skills/"
-# (or symlink this repo there for live dev)
+# (or symlink this dir there for live dev)
 ```
 
 Enable **Vault Skills** in Obsidian → Community plugins, then use the ribbon icon or the
-command **"Export skills & agents to Claude Code"**.
+command **"Export skills & agents to Claude Code"**, and `/reload-plugins` in Claude Code.
 
 ## Settings
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Output plugin directory | `~/repos/vault-skills` | Where the generated Claude Code plugin is written. |
+| Output plugin directory | `~/repos/vault-skills/claude-plugin` | Where the generated Claude Code plugin is written (the monorepo's landing plugin). |
 | Plugin name | `vault-skills` | CC plugin name / command namespace / symlink name. |
 | Manage `~/.claude` symlink | on | Ensure `~/.claude/skills/<name>` → output dir. |
 | Export on save | off | Re-export when a skill/agent note changes. |
-
-## Relationship to the `vault-skills` Claude Code plugin
-
-Both produce the **same artifact format**. The Claude Code plugin ships a Node CLI
-exporter (`bin/export-from-vault.mjs`) for headless/marketplace use; this Obsidian plugin
-is the interactive authoring path. Point both at the same output directory.
 
 Desktop only (uses Node `fs` to write outside the vault).

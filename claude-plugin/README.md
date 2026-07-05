@@ -21,8 +21,9 @@ so Claude Code loads it in place as `vault-skills@skills-dir`. After each export
 `/reload-plugins` in Claude Code.
 
 Skills invoke as `/vault-skills:<name>`; agents as `vault-skills:<name>`. The exporter
-wires a `00 → area → category` cascade and preloads each agent's scope skills — see the
-convention in [`../docs/frontmatter-convention.md`](../docs/frontmatter-convention.md).
+builds a tree from each note's `parent` edge — every agent owns its skills (preloaded)
+and delegates to its child agents — see
+[`../docs/frontmatter-convention.md`](../docs/frontmatter-convention.md).
 
 Do not hand-edit `skills/` or `agents/` — they are generated. Edit the vault notes and
 re-export.

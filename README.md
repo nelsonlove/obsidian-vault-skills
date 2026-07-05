@@ -1,8 +1,8 @@
 # vault-skills
 
-Author skills and agents as notes in an Obsidian (Johnny Decimal) vault, and load them
-as a native **Claude Code** plugin — with each agent owning its scope's skills, wired
-into a `00 → area → category` cascade.
+Author skills and agents as notes in an Obsidian vault, and load them as a native
+**Claude Code** plugin — organized as a tree where each agent owns its skills and
+delegates to its child agents.
 
 This is a **monorepo with two halves — a producer and a product:**
 
@@ -12,17 +12,27 @@ your vault ─▶ obsidian/ (producer) ─writes─▶ claude-plugin/ (product) 
 
 | Directory | What it is | Runtime |
 |---|---|---|
-| [`obsidian/`](obsidian) | The **Obsidian plugin** — the exporter. Discovers `type: skill\|agent` notes via the metadata cache, transforms/wires them, and writes the Claude Code plugin. | runs inside Obsidian |
+| [`obsidian/`](obsidian) | The **Obsidian plugin** — the exporter. Discovers `type: skill\|agent` notes via the metadata cache, builds/validates the tree, and writes the Claude Code plugin. | runs inside Obsidian |
 | [`claude-plugin/`](claude-plugin) | The **Claude Code plugin** — the landing zone the exporter populates and Claude Code loads. | loaded by Claude Code |
-| [`docs/`](docs) | The vault note convention (`type`, scope derivation, `delegates-to`, ownership). | — |
+| [`docs/`](docs) | The note convention and the build spec. | — |
 
 ## The model
 
-A scope is an **agent that owns a skill set**. The exporter compiles the vault into a
-cascade — a general `00` vault agent that delegates to area agents, which delegate to
-category agents — and preloads each agent's scope skills via the `skills:` frontmatter
-field. See [`obsidian/README.md`](obsidian/README.md) and
-[`docs/frontmatter-convention.md`](docs/frontmatter-convention.md).
+Structure lives in **frontmatter, not folders**. Each note declares its `type`
+(`skill`/`agent`) and a single `parent` (a `[[wikilink]]`); the exporter builds a strict
+tree and compiles it:
+
+- a skill's `parent` is the agent that **owns** it (preloaded via `skills:`);
+- an agent's `parent` is the agent that **delegates to** it (gets the `Agent` tool + a
+  routing section);
+- **sharing = level 0** — one parent only; a skill with no `parent` is owned by the root
+  and globally invokable;
+- a **root** is the agent marked `root: true`, or one is synthesized;
+- edges are **validated** (unresolved / wrong-type / multiple parents, cycles, unreachable,
+  depth past the 5-level nesting cap).
+
+See [`docs/frontmatter-convention.md`](docs/frontmatter-convention.md) (authoring) and
+[`docs/spec-frontmatter-tree.md`](docs/spec-frontmatter-tree.md) (full rules).
 
 ## Quick start
 
