@@ -5,8 +5,10 @@ native **Claude Code** plugin — from inside Obsidian, one click.
 
 This is the **producer** half of the [monorepo](../README.md); it writes into the
 [`../claude-code`](../claude-code) landing plugin. It runs the exporter natively in
-TypeScript over Obsidian's metadata cache (no file walk, no YAML parsing) and manages the
-one symlink that lets Claude Code load the result in place.
+TypeScript over Obsidian's metadata cache (no file walk, no YAML parsing). It writes only
+inside its configured output dir (the plugin's own dir) — it never creates symlinks or
+files *elsewhere* in `~/.claude`. Getting that dir loaded by Claude Code is a one-time
+user setup (below).
 
 ## What it does
 
@@ -17,9 +19,11 @@ one symlink that lets Claude Code load the result in place.
 3. **Compile** — emit `skills/<name>/SKILL.md` and `agents/<name>.md`, wiring each agent's
    owned skills (`skills:` preload) and its child agents (delegation), overwriting
    idempotently via a manifest.
-4. **Link** — ensure `~/.claude/skills/<plugin-name>` → the output directory, so Claude
-   Code loads it in place. Then you run `/reload-plugins` (the one step the plugin can't
-   do for you — there's no channel into a running Claude Code session).
+4. **Stop there** — the plugin does *not* load anything or reach outside its output dir.
+   Loading is a one-time user setup: either point the output dir directly at a
+   `~/.claude/skills/<name>` location, or symlink the output dir into `~/.claude/skills`
+   yourself. After that, each export updates it in place and you just run `/reload-plugins`
+   (which the plugin can't do — no channel into a running Claude Code session).
 
 ## The model: a scope is an agent that owns skills
 
@@ -84,8 +88,7 @@ command **"Export skills & agents to Claude Code"**, and `/reload-plugins` in Cl
 | Setting | Default | Meaning |
 |---|---|---|
 | Output plugin directory | `~/repos/vault-skills/claude-code` | Where the generated Claude Code plugin is written (the monorepo's landing plugin). |
-| Plugin name | `vault-skills` | CC plugin name / command namespace / symlink name. |
-| Manage `~/.claude` symlink | on | Ensure `~/.claude/skills/<name>` → output dir. |
+| Plugin name | `vault-skills` | CC plugin name / command & subagent namespace. |
 | Export on save | off | Re-export when a skill/agent note changes. |
 
 Desktop only (uses Node `fs` to write outside the vault).

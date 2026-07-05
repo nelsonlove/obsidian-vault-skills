@@ -4,7 +4,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runExport, collectNotes } from "../src/exporter.ts";
-import { ensureSymlink } from "../src/paths.ts";
 
 // Minimal stand-in for Obsidian's App, including wikilink resolution by basename.
 function mockApp(notes) {
@@ -67,17 +66,4 @@ test("runExport removes stale artifacts when a note disappears", async () => {
   assert.ok(fs.existsSync(path.join(out, "agents/grants.md")), "kept agent remains");
 
   fs.rmSync(out, { recursive: true, force: true });
-});
-
-test("ensureSymlink creates the link and is idempotent", () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "vs-link-"));
-  const target = path.join(base, "target");
-  const link = path.join(base, "skills", "vault-skills");
-  fs.mkdirSync(target, { recursive: true });
-
-  assert.equal(ensureSymlink(target, link).status, "created");
-  assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
-  assert.equal(ensureSymlink(target, link).status, "already");
-
-  fs.rmSync(base, { recursive: true, force: true });
 });

@@ -1,6 +1,6 @@
 import { Plugin, Notice } from "obsidian";
 import { runExport } from "./exporter.js";
-import { expandTilde, claudeSkillsLink, ensureSymlink } from "./paths.js";
+import { expandTilde } from "./paths.js";
 import { DEFAULT_SETTINGS, VaultSkillsSettingTab, type VaultSkillsSettings } from "./settings.js";
 
 export default class VaultSkillsPlugin extends Plugin {
@@ -43,15 +43,6 @@ export default class VaultSkillsPlugin extends Plugin {
       const outputDir = expandTilde(this.settings.outputDir);
       const summary = await runExport(this.app, { outputDir, pluginName: this.settings.pluginName });
 
-      let symlinkNote = "";
-      if (this.settings.manageSymlink) {
-        const link = claudeSkillsLink(this.settings.pluginName);
-        const r = ensureSymlink(outputDir, link);
-        if (r.status === "created") symlinkNote = `\nLinked ${link}`;
-        else if (r.status === "exists-not-symlink") symlinkNote = `\n⚠ ${link} exists and is not a symlink — left as-is`;
-        else if (r.status === "error") symlinkNote = `\n⚠ symlink error: ${r.detail}`;
-      }
-
       const issue = (label: string, items: string[]) =>
         items.length ? `\n${items.length} ${label}: ${items[0]}${items.length > 1 ? " …" : ""}` : "";
       const err = issue("error(s)", summary.errors);
@@ -60,7 +51,6 @@ export default class VaultSkillsPlugin extends Plugin {
       new Notice(
         `Vault Skills: exported ${summary.skills} skill(s) + ${summary.agents} agent(s)` +
           (summary.removed ? `, removed ${summary.removed}` : "") +
-          symlinkNote +
           err +
           warn +
           `\nRun /reload-plugins in Claude Code to load.`,

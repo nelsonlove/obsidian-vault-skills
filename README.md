@@ -45,6 +45,12 @@ mkdir -p "<vault>/.obsidian/plugins/vault-skills"
 cp obsidian/manifest.json obsidian/main.js "<vault>/.obsidian/plugins/vault-skills/"
 ```
 
-Enable **Vault Skills** in Obsidian. Its default output is this repo's `claude-code/`,
-and it manages the `~/.claude/skills/vault-skills → claude-code` symlink. Hit the
-export command, then `/reload-plugins` in Claude Code.
+Enable **Vault Skills** in Obsidian; its default output is this repo's `claude-code/`. To
+load it, do a **one-time** setup — symlink that dir into Claude Code's skills dir:
+
+```bash
+ln -s ~/repos/vault-skills/claude-code ~/.claude/skills/vault-skills
+```
+
+The Obsidian plugin only writes its own output dir; it never creates this link for you.
+After that, each export updates the content in place — hit export, then `/reload-plugins`.

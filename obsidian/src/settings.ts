@@ -4,14 +4,12 @@ import type VaultSkillsPlugin from "./main.js";
 export interface VaultSkillsSettings {
   outputDir: string;
   pluginName: string;
-  manageSymlink: boolean;
   exportOnSave: boolean;
 }
 
 export const DEFAULT_SETTINGS: VaultSkillsSettings = {
   outputDir: "~/repos/vault-skills/claude-code",
   pluginName: "vault-skills",
-  manageSymlink: true,
   exportOnSave: false,
 };
 
@@ -36,20 +34,10 @@ export class VaultSkillsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Plugin name")
-      .setDesc("Claude Code plugin name — also the command namespace and the ~/.claude/skills symlink name.")
+      .setDesc("Claude Code plugin name — also the command/subagent namespace.")
       .addText((t) =>
         t.setValue(this.plugin.settings.pluginName).onChange(async (v) => {
           this.plugin.settings.pluginName = v.trim();
-          await this.plugin.saveSettings();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Manage ~/.claude symlink")
-      .setDesc("Ensure ~/.claude/skills/<name> → the output directory, so Claude Code loads it in place.")
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.manageSymlink).onChange(async (v) => {
-          this.plugin.settings.manageSymlink = v;
           await this.plugin.saveSettings();
         }),
       );
