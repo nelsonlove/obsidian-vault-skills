@@ -46,10 +46,9 @@ root vault agent  →  child agents  →  grandchild agents   (delegation, up to
 Full rules and field reference: [`../docs/spec-frontmatter-tree.md`](../docs/spec-frontmatter-tree.md)
 and [`../docs/frontmatter-convention.md`](../docs/frontmatter-convention.md).
 
-> The `skills:` reference format for plugin skills (`vault-skills:<name>` vs bare
-> `<name>`) isn't pinned down in the Claude Code docs — the exporter emits the namespaced
-> form; if a live test shows preload doesn't fire, switch to bare names (one line in
-> `src/transform.ts`).
+> Preload uses the **namespaced** `skills:` ref (`vault-skills:<name>`) — verified firing
+> in a live Claude Code session (a preloaded skill's content reached a subagent that had no
+> Skill tool), so no change is needed.
 
 ## Note convention (short)
 
