@@ -171,3 +171,21 @@ test("notes without type: skill|agent are ignored", () => {
   const { generated } = transformAll([note("n.md", { title: "x" }, [])], { pluginName: "vault-skills", synthesizeRoot: false });
   assert.equal(generated.length, 0);
 });
+
+test("crosscutting agent fans into scope agents as a specialist, not a vertical lane", () => {
+  const { generated, tree } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("area.md", { type: "agent", name: "research", tools: ["Read"] }, ["root.md"]),
+    note("cat.md", { type: "agent", name: "grants", tools: ["Read"] }, ["area.md"]),
+    note("surv.md", { type: "agent", name: "surveyor", crosscutting: true, slot: ".00", tools: ["Read"] }, ["root.md"]),
+  ], OPTS);
+  const root = find(generated, "agents/vault.md");
+  const grants = find(generated, "agents/grants.md");
+  const surveyor = find(generated, "agents/surveyor.md");
+  assert.doesNotMatch(root.content, /`vault-skills:surveyor` — /, "not a vertical lane");
+  assert.match(grants.content, /## Cross-cutting specialists/);
+  assert.match(grants.content, /- `vault-skills:surveyor` \(\.00\)/, "listed as a specialist with its slot");
+  assert.match(grants.content, /tools: \[Read, Agent\]/, "leaf scope agent gets the Agent tool to delegate");
+  assert.doesNotMatch(surveyor.content, /## Cross-cutting specialists/, "a specialist doesn't itself get the block");
+  assert.equal(tree.find((n) => n.name === "surveyor").crosscutting, true);
+});

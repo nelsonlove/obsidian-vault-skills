@@ -21,6 +21,8 @@ sits in. Put notes wherever you like; the tree lives in frontmatter.
 | `tools` | no | agent | Allowlist, e.g. `[Read, Grep]`. `Agent` is appended when it has child agents, `Skill` when it owns skills. |
 | `model` | no | agent | `sonnet` \| `opus` \| `haiku` \| id \| `inherit`. |
 | `version` | no | skill | Skill version. |
+| `crosscutting` | no | agent | `true` ⇒ a horizontal "slot" specialist — fanned into every scope agent's routing (attaches at root). |
+| `slot` | no | agent | Display label for the standard zero a cross-cutting agent serves, e.g. `.00`. |
 
 ## Field namespacing
 
@@ -52,22 +54,24 @@ Everything is one relationship — **`parent`** — read three ways:
   agents is to give it *no* `parent`: it lands at level 0, owned by the root and globally
   invokable. Level 0 is the only place a skill is reachable from everywhere.
 
-## Cross-cutting agents & auto-delegation
+## Cross-cutting agents (the horizontal axis)
 
-An agent whose `parent` is the root is **cross-cutting** — a "slot" specialist reachable
-from the top for one craft, alongside the vertical scope agents. Whether the main agent
-actually hands off to it is driven **entirely by its `description`** (Claude reads
-descriptions to choose a subagent — there is no separate routing table). Two conventions
-steer that:
+Some agents own **one craft across every scope** — a surveyor, a triager — rather than a
+lane. Mark one with **`crosscutting: true`** (optionally `slot: ".00"`, naming the standard
+zero it serves). It attaches at the root but is **fanned into every scope agent's routing**
+as a *Cross-cutting specialist*, so any agent can hand its slot work to it and pass its own
+scope — the "cell": *survey **this** category*. Cross-cutting agents are kept out of the
+normal delegate-to lanes, and every scope agent gets the `Agent` tool so it can reach them.
 
-- Phrase the description as **when to use** the agent, and open with **"Use PROACTIVELY
-  to …"** so the orchestrator delegates on its own initiative, not only when the agent is
-  named. `MUST BE USED when …` is the stronger form.
-- Give each agent **one clear responsibility** — a focused description routes cleanly.
+Delegation stays description-driven — a subagent already **sees every other agent's full
+description**, so the injected block is just a short pointer (name + slot), not a copy. Keep
+it reliable with two conventions:
 
-Auto-delegation is probabilistic, so keep descriptions specific. The read/write posture is
-**mechanical**, not advisory: grant a read-only agent only `[Read, Grep, Glob]` and it
-cannot write no matter what its prompt says.
+- Open the description with **"Use PROACTIVELY to …"** (or `MUST BE USED when …`).
+- One clear responsibility per agent.
+
+The read/write posture is **mechanical**: grant a read-only specialist only `[Read, Grep,
+Glob]` and it cannot write, whatever its prompt says.
 
 ## Worked example
 

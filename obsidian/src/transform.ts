@@ -39,6 +39,7 @@ export interface TreeNode {
   level: number;
   skills: string[];        // owned skills' generated names (agents only)
   children: string[];      // child agents' generated names (agents only)
+  crosscutting: boolean;   // horizontal slot agent (fanned into scope agents' routing)
 }
 
 export interface TransformResult {
@@ -60,6 +61,8 @@ interface Node {
   version?: string;
   tools?: string[];
   model?: string;
+  crosscutting: boolean;
+  slot?: string;
   body: string;
   // resolved:
   parent: Node | null;
@@ -150,6 +153,8 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       version: str(fm.version),
       tools: toolsArray(fm.tools),
       model: str(fm.model),
+      crosscutting: fm.crosscutting === true,
+      slot: str(fm.slot),
       body: note.body.trim(),
       parent: null, children: [], ownedSkills: [], level: -1, genName: "", valid: true,
     });
@@ -170,7 +175,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       nameBase: "vault", label: "Vault",
       rawDesc: "General vault agent — routes each request to the appropriate sub-agent.",
       body: "You are the general agent for this vault. Understand each request and delegate to the appropriate sub-agent; coordinate across sub-agents yourself when a request spans several.",
-      parent: null, children: [], ownedSkills: [], level: 0, genName: "", valid: true,
+      crosscutting: false, parent: null, children: [], ownedSkills: [], level: 0, genName: "", valid: true,
     };
     nodes.unshift(root);
     byPath.set(root.path, root);
@@ -212,7 +217,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
   // ---- phase 5: wire children + ownership from valid nodes ----
   for (const n of nodes) {
     if (!n.valid || n === root || !n.parent) continue;
-    if (n.kind === "agent") n.parent.children.push(n);
+    if (n.kind === "agent") { if (!n.crosscutting) n.parent.children.push(n); }
     else n.parent.ownedSkills.push(n);
   }
 
@@ -260,6 +265,10 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     return bc ? `[${bc}] ${n.rawDesc}` : n.rawDesc;
   };
 
+  const scopeOf = (n: Node): string =>
+    n.isRoot ? "the whole vault" : (breadcrumb(n) ? `${breadcrumb(n)} › ${n.label}` : n.label);
+  const crosscut = nodes.filter((n) => n.valid && n.kind === "agent" && n.crosscutting);
+
   // ---- phase 7: render ----
   const generated: Generated[] = [];
   for (const n of nodes) {
@@ -276,7 +285,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     // invoke owned skills). Only matters when tools are explicitly listed; omitting tools
     // inherits everything.
     let tools = n.tools;
-    if (n.children.length && tools && !tools.includes("Agent")) tools = [...tools, "Agent"];
+    if ((n.children.length || (crosscut.length && !n.crosscutting)) && tools && !tools.includes("Agent")) tools = [...tools, "Agent"];
     if (n.ownedSkills.length && tools && !tools.includes("Skill")) tools = [...tools, "Skill"];
     const skillRefs = n.ownedSkills.map((s) => `${opts.pluginName}:${s.genName}`);
     const fmOut = toYaml({ name: n.genName, description: describe(n), tools, model: n.model, skills: skillRefs });
@@ -299,6 +308,10 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
         : "## Delegates to\n\nDelegate sub-scope work to the matching agent via the Agent tool:";
       bodyOut += `\n\n${heading}\n${items.join("\n")}`;
     }
+    if (crosscut.length && !n.crosscutting) {
+      const specialists = crosscut.map((c) => `- \`${opts.pluginName}:${c.genName}\`${c.slot ? ` (${c.slot})` : ""}`);
+      bodyOut += `\n\n## Cross-cutting specialists\n\nFor single-craft work on a standard-zero slot of your scope (${scopeOf(n)}), prefer the matching specialist and tell it which scope to work on — their full descriptions are already visible to you. Delegate via the Agent tool:\n${specialists.join("\n")}`;
+    }
 
     const src = n.path === SYNTH_ROOT_PATH ? "(synthesized root)" : n.path;
     generated.push({ kind: "agent", relOut: `agents/${n.genName}.md`, from: src,
@@ -312,6 +325,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     level: n.level,
     skills: n.ownedSkills.map((s) => s.genName),
     children: n.children.map((c) => c.genName),
+    crosscutting: n.crosscutting,
   }));
 
   return { generated, warnings, errors, tree };

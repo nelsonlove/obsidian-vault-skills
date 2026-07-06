@@ -27,6 +27,8 @@ its skills; `root → … → leaf` delegation). Folders become purely organizat
 | `tools` | no | agent | Tool allowlist; `Agent` appended automatically if it has child agents. |
 | `model` | no | agent | Model. |
 | `version` | no | skill | Skill version. |
+| `crosscutting` | no | agent | `true` ⇒ horizontal slot agent; fanned into every scope agent's routing, excluded from vertical lanes. |
+| `slot` | no | agent | Display-only standard-zero label for a cross-cutting agent, e.g. `.00`. |
 
 ¹ Omitting `parent` means "child of the root" — it is not an error.
 
@@ -87,6 +89,20 @@ agent in its parent's subtree** (root ⇒ all agents). For each agent, applicabl
 bodies are gathered along its ancestor-or-self chain, root-most first, and appended after
 the Vault-access line. Validation: multiple parents, an unresolved parent, or a parent that
 isn't a valid agent ⇒ error (the policy is dropped).
+
+## Horizontal axis (cross-cutting agents)
+
+`crosscutting: true` marks an agent a horizontal **slot** specialist (optional `slot` labels the
+standard zero it serves). Layered on the vertical tree:
+
+- It keeps a `parent` (for validity/level) but is **excluded from that parent's `children`**, so it
+  never renders as a vertical delegate-to lane.
+- The set of all crosscutting agents is **fanned into every non-crosscutting agent's body** as a
+  *Cross-cutting specialists* block — a compact pointer (`<plugin>:<name> (<slot>)`), not the full
+  descriptions (a subagent already sees those). The block names the agent's own scope so the callee
+  can be told which lane to act on (the "cell").
+- Any agent with a non-empty crosscutting set gets the `Agent` tool, so even leaves can delegate.
+- `TreeNode.crosscutting` surfaces the flag.
 
 ## MCP server
 
