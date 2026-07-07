@@ -7,6 +7,7 @@
 // empty — the emission path is exercised by the real build, not the unit tests.
 
 declare const __NEW_SKILL_MD__: string | undefined;
+declare const __NEW_SKILL_CONVENTIONS__: string | undefined;
 
 export interface StaticFile {
   relOut: string;
@@ -14,7 +15,11 @@ export interface StaticFile {
 }
 
 const newSkillMd = typeof __NEW_SKILL_MD__ !== "undefined" ? __NEW_SKILL_MD__ : "";
+const conventionsMd = typeof __NEW_SKILL_CONVENTIONS__ !== "undefined" ? __NEW_SKILL_CONVENTIONS__ : "";
 
 export const STATIC_FILES: StaticFile[] = newSkillMd
-  ? [{ relOut: "skills/new-skill/SKILL.md", content: newSkillMd }]
+  ? [
+      { relOut: "skills/new-skill/SKILL.md", content: newSkillMd },
+      ...(conventionsMd ? [{ relOut: "skills/new-skill/conventions.md", content: conventionsMd }] : []),
+    ]
   : [];

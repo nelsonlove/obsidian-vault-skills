@@ -13,6 +13,7 @@ const external = [
 // Static skills shipped inside the plugin, embedded at build time (src/static-skills.ts
 // reads these defines). The exporter emits them into the output dir on each export.
 const newSkillMd = fs.readFileSync("assets/new-skill/SKILL.md", "utf8");
+const conventionsMd = fs.readFileSync("assets/new-skill/conventions.md", "utf8");
 
 // Build the stdio bridge and embed it (written to ~/.claude/vault-skills-mcp/bridge.mjs at runtime).
 await esbuild.build({
@@ -29,7 +30,7 @@ const plugin = {
   platform: "node",
   target: "es2022",
   external,
-  define: { __NEW_SKILL_MD__: JSON.stringify(newSkillMd), __VS_BRIDGE_SOURCE__: JSON.stringify(bridgeText) },
+  define: { __NEW_SKILL_MD__: JSON.stringify(newSkillMd), __NEW_SKILL_CONVENTIONS__: JSON.stringify(conventionsMd), __VS_BRIDGE_SOURCE__: JSON.stringify(bridgeText) },
   outfile: "main.js",
   sourcemap: production ? false : "inline",
   minify: production,

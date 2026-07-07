@@ -1,70 +1,64 @@
 ---
 name: new-skill
-description: Scaffold a new vault skill or agent note in the Vault Skills convention. Use when the user wants to create or add a new skill or agent to their Obsidian vault (which the vault-skills exporter turns into a Claude Code skill/agent).
+description: Scaffold a new vault skill, agent, or policy note in the Vault Skills convention. Use when the user wants to add a new skill, agent (including a cross-cutting one), or policy to their Obsidian vault (which the vault-skills exporter turns into a Claude Code skill / agent / injected context).
 ---
 
-# Author a new vault skill or agent
+# Author a new vault skill, agent, or policy
 
-This skill writes a new note into the **source Obsidian vault** in the Vault Skills
-frontmatter convention. It's the authoring counterpart to the exporter: you create the
-note here, then re-export and reload to make it a live Claude Code skill/agent.
+Writes a new note into the **source Obsidian vault** in the Vault Skills frontmatter
+convention. Create the note here, then re-export + reload to make it live.
+
+Full field & rule reference is bundled next to this skill —
+`${CLAUDE_PLUGIN_ROOT}/skills/new-skill/conventions.md`. Read it if anything below is unclear.
 
 ## 1. Locate the vault
 
-Read `${CLAUDE_PLUGIN_ROOT}/.vault-skills-manifest.json` and use its `vault` field — that
-is the absolute path of the source vault this plugin was generated from. If the field is
-missing or `null`, ask the user for the vault path.
+Read `${CLAUDE_PLUGIN_ROOT}/.vault-skills-manifest.json` and use its `vault` field (the absolute
+path of the source vault this plugin was generated from). If missing / null, ask the user.
 
 ## 2. Gather the inputs
 
-Ask for whatever isn't already clear:
+- **type** — `skill`, `agent`, or `policy`?
+- **name** — short, kebab-case (the invocation name; a policy doesn't need one).
+- **description** — trigger text Claude uses to load / delegate (skills & agents).
+- **parent** — a single wikilink to the parent **agent**:
+  - a **skill's** parent is the agent that *owns* it (omit ⇒ shared / global at level 0);
+  - an **agent's** parent is the agent that *delegates to* it (omit ⇒ child of the root);
+  - a **policy's** parent *scopes where it applies* — omit ⇒ injected into **every** agent;
+    `[[agent]]` ⇒ that agent and its whole subtree;
+  - to create the *root* agent, set `root: true` and no parent (only one root).
+- **cross-cutting?** (agents only) — if it's one craft across *all* scopes (a surveyor, a
+  triager), set `crosscutting: true` and `slot: ".0X"`; it becomes reachable from every scope agent.
+- **body** — the SKILL.md body (skill), the system prompt (agent), or the shared context to
+  inject (policy).
 
-- **kind** — `skill` or `agent`?
-- **name** — short, kebab-case (becomes the invocation name).
-- **description** — the trigger text Claude uses to load/delegate to it.
-- **parent** — the note's single parent **agent**:
-  - a **skill's** parent is the agent that will *own* it (preload it);
-  - an **agent's** parent is the agent that will *delegate to* it;
-  - **omit the parent** to attach directly to the root (for a skill, that means it's
-    shared/global at level 0 — the only way to share a skill across agents);
-  - to create the *root* agent itself, set `root: true` and no parent (only one root).
-- **body** — the SKILL.md body (for a skill) or the agent's system prompt.
-
-To help pick a parent, list the existing agents — read the note frontmatter under the
-vault (`type: agent`), or the generated `${CLAUDE_PLUGIN_ROOT}/agents/`.
-
-Constraints to respect (the exporter validates these): `parent` must be a **single**
-wikilink to an **agent**; the tree must be acyclic and reach the root; agents deeper than
-5 levels won't be reachable by live delegation. Full rules: the vault's
-`docs/spec-frontmatter-tree.md`.
+To pick a parent, list existing agents (`type: agent` notes in the vault, or
+`${CLAUDE_PLUGIN_ROOT}/agents/`). Constraints: a single wikilink to an **agent**; acyclic;
+reaches the root; ≤ 5 levels. (Details in the bundled `conventions.md`.)
 
 ## 3. Write the note
 
-Choose a location in the vault (folders don't affect structure — pick the parent note's
-folder, or ask). Write `<vault>/<folder>/<name>.md`:
+Folders don't affect structure — pick the parent's folder or ask. Write `<vault>/<folder>/<name>.md`:
 
 ```md
 ---
-type: <skill|agent>
-parent: "[[<parent-note-name>]]"   # omit if it should attach to the root
-description: <description>
-# optional: name, id, label, tools: [Read, Grep], model, version
+type: <skill|agent|policy>
+parent: "[[<parent-agent>]]"          # omit to attach to the root
+description: <trigger text>            # skills & agents
+# agent-only: name, tools: [Read, Grep], model, crosscutting: true, slot: ".01"
 ---
 
-<body>
+<body — SKILL.md body / agent system prompt / policy context to inject>
 ```
 
-Use `Write` to create the file (or `obsidian://new` via the shell if you want Obsidian's
-create pipeline / templates to run). Do **not** write into `${CLAUDE_PLUGIN_ROOT}` — that
-is generated output; the source of truth is the vault.
+Use `Write`. Do **not** write into `${CLAUDE_PLUGIN_ROOT}` — that is generated output; the
+source of truth is the vault.
 
-## 4. Tell the user to publish it
+## 4. Publish
 
-The note won't be a live skill/agent until it's exported:
+1. In Obsidian: run the **Vault Skills** export (ribbon icon or *Export skills & agents to
+   Claude Code*), or call the `vault_skills_export` MCP tool.
+2. In Claude Code: `/reload-plugins`.
 
-1. In Obsidian, run the **Vault Skills** export (ribbon icon or *Export skills & agents to
-   Claude Code*).
-2. In Claude Code, run `/reload-plugins`.
-
-Then confirm what was created and how it will be invoked (`/vault-skills:<name>` for a
-skill; `vault-skills:<name>` as a subagent for an agent).
+Then confirm invocation: `/vault-skills:<name>` (skill), `vault-skills:<name>` (subagent). A
+policy has no invocation — it's injected into its scope's agents' prompts.
