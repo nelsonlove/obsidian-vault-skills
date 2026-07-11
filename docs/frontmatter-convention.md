@@ -24,6 +24,19 @@ sits in. Put notes wherever you like; the tree lives in frontmatter.
 | `crosscutting` | no | agent | `true` ⇒ a horizontal "slot" specialist — fanned into every scope agent's routing (attaches at root). |
 | `slot` | no | agent | Display label for the standard zero a cross-cutting agent serves, e.g. `.00`. |
 
+**Skill passthrough fields.** A skill note may also set any of the documented SKILL.md
+frontmatter keys and they are copied into the generated skill verbatim (namespaced like
+every other field — `vs-user-invocable` under a `vs-` prefix, etc.):
+`when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`,
+`allowed-tools`, `disallowed-tools`, `model`, `effort`, `context`, `agent`, `paths`,
+`shell`. Anything else in the note's frontmatter (`tags`, `aliases`, dates, …) stays in
+the vault and is **not** exported. Values must be scalars or lists of scalars — nested
+values are dropped with a warning (`hooks` is excluded for the same reason).
+
+⚠ With a **blank prefix**, these are bare top-level keys — a skill note using e.g.
+`context:` or `paths:` for its *own* purposes would export that value with the Claude
+Code meaning. If your vault's frontmatter vocabulary collides, set a field prefix.
+
 ## Field namespacing
 
 Bare field names (`type`, `parent`, `description`, …) can collide with your vault's own
@@ -89,6 +102,33 @@ invoke as `/vault-skills:<name>`; agents are the subagents `vault-skills:<name>`
 
 If you omit the root note, a `vault` root is synthesized so the cascade has an entry point.
 
+## Supporting files (scripts, references)
+
+A skill is one note — but skills often need more than markdown: helper scripts, reference
+docs, templates. Those live in a **parallel filesystem tree** (the *Supporting-files tree*
+setting; in a Johnny Decimal setup, typically `~/Documents` mirroring the vault's folder
+structure). The mapping is by path: a skill note at
+
+```
+<vault>/60-69 Work/61.05 Agents & skills/skills/sessions.md
+```
+
+bundles everything under
+
+```
+<assetsRoot>/60-69 Work/61.05 Agents & skills/skills/sessions/
+```
+
+into the generated `skills/<name>/` directory, next to SKILL.md — subfolders, executable
+bits and all. The skill body can then reference them the standard way:
+`${CLAUDE_PLUGIN_ROOT}/skills/<name>/bin/tool.py`.
+
+Notes: if the tree lives in iCloud Drive, evicted files are downloaded (`brctl download`)
+before copying — a file that can't be materialized in time is skipped with a warning. A
+supporting file named `SKILL.md` is ignored (the generated one wins). `.DS_Store` is
+skipped. Bundled files are tracked in the export manifest, so they're cleaned up when the
+note or folder goes away.
+
 ## Policy notes (shared context)
 
 A **`type: policy`** note isn't emitted as a skill or agent — its **body is injected as
@@ -119,3 +159,13 @@ These notes are the **source of truth**. The generated skills/agents (written to
 re-export from the **Vault Skills** Obsidian plugin — ribbon icon, the *Export skills &
 agents to Claude Code* command, or the `vault_skills_export` MCP tool — then run
 `/reload-plugins` in Claude Code.
+
+## Versioned releases
+
+The regular export targets your live load location. To publish the compiled plugin as a
+versioned artifact, point the *Release repo directory* setting at a git checkout and run
+the **Export release to repo** command (or the `vault_skills_release` MCP tool, which
+takes `version` and an optional `dir`). It writes the identical full plugin there —
+generated content, supporting files, static skills — and stamps your chosen version into
+`.claude-plugin/plugin.json` (suggesting the next patch bump). It deliberately does
+**not** touch git: review the diff, commit, and tag to publish.

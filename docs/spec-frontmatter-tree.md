@@ -29,6 +29,7 @@ its skills; `root → … → leaf` delegation). Folders become purely organizat
 | `version` | no | skill | Skill version. |
 | `crosscutting` | no | agent | `true` ⇒ horizontal slot agent; fanned into every scope agent's routing, excluded from vertical lanes. |
 | `slot` | no | agent | Display-only standard-zero label for a cross-cutting agent, e.g. `.00`. |
+| *passthrough* | no | skill | The documented SKILL.md keys `when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `allowed-tools`, `disallowed-tools`, `model`, `effort`, `context`, `agent`, `paths`, `shell` are copied into the generated SKILL.md verbatim (same namespacing as all fields). All other frontmatter is ignored. `hooks` is not passed through (nested YAML). |
 
 ¹ Omitting `parent` means "child of the root" — it is not an error.
 
@@ -81,6 +82,28 @@ Errors skip the node and warn; warnings advise.
 - **Synthesized root**: name `vault`, generic router body, owns level-0 skills, delegates
   to level-1 agents.
 
+### Supporting files (assets)
+
+When the *Supporting-files tree* setting (`assetsRoot`) is set, each skill note at
+`<dir>/<base>.md` bundles the contents of `<assetsRoot>/<dir>/<base>/` (recursively,
+preserving file modes) into its generated `skills/<name>/` directory:
+
+- iCloud placeholders (`.<name>.icloud`) are materialized via `brctl download` first;
+  files that don't materialize within the timeout are skipped with a **warning**.
+- A supporting file named `SKILL.md` is skipped with a warning (generated file wins).
+- `.DS_Store` is skipped.
+- Bundled files are recorded in `.vault-skills-manifest.json`, so a later export without
+  them removes them like any stale generated file.
+
+### Release export
+
+An export may carry an explicit `version`: identical output, plus the version is stamped
+into the target's `.claude-plugin/plugin.json` (created if absent, updated in place —
+other manifest fields preserved). Surfaced as the **Export release to repo** command
+(target = the *Release repo directory* setting; prompts with the next patch bump) and the
+`vault_skills_release` MCP tool (`version`, optional `dir`). Git operations (commit, tag,
+push) are intentionally out of scope.
+
 ### Policy notes (shared context)
 
 A `type: policy` note is not emitted as a file. Its `parent` is resolved like any node's
@@ -113,6 +136,7 @@ the same cores without the Obsidian UI:
 - `vault_skills_validate` — errors/warnings/counts (read-only)
 - `vault_skills_tree` — the current hierarchy (read-only)
 - `vault_skills_export` — write the plugin to the output dir (then `/reload-plugins`)
+- `vault_skills_release` — package a versioned release into a repo checkout
 - `vault_skills_mark` — set the vault-skills fields on an existing note by path
 
 State (socket, discovery, bridge) lives in `~/.claude/vault-skills-mcp/`.

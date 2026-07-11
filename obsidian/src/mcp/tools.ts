@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { App, TFile } from "obsidian";
 import { ok, fail } from "./helpers.js";
-import { analyzeVault, runExport, markFrontmatter, type FieldConfig } from "../exporter.js";
+import { analyzeVault, runExport, markFrontmatter, readPluginVersion, type FieldConfig } from "../exporter.js";
 import { expandTilde } from "../paths.js";
 import type { VaultSkillsSettings } from "../settings.js";
 
@@ -53,11 +53,41 @@ export function registerTools(server: McpServer, ctx: ServerCtx): void {
   }, async () => {
     try {
       const s = ctx.getSettings();
-      const summary = await runExport(app, { outputDir: expandTilde(s.outputDir), pluginName: s.pluginName, fields: fieldsOf(s) });
+      const summary = await runExport(app, {
+        outputDir: expandTilde(s.outputDir), pluginName: s.pluginName, fields: fieldsOf(s),
+        assetsRoot: expandTilde(s.assetsRoot),
+      });
       return ok({
-        skills: summary.skills, agents: summary.agents, removed: summary.removed,
+        skills: summary.skills, agents: summary.agents, assets: summary.assets, removed: summary.removed,
         errors: summary.errors, warnings: summary.warnings, outputDir: summary.outputDir,
         note: "Run /reload-plugins in Claude Code to load the changes.",
+      });
+    } catch (e) { return fail(e); }
+  });
+
+  server.registerTool("vault_skills_release", {
+    title: "Package a versioned release into a repo",
+    description: "Export the full plugin into a git checkout (the configured release repo dir, or an explicit dir) and stamp the given version into .claude-plugin/plugin.json. Does not commit, tag, or push. Mutating.",
+    inputSchema: {
+      version: z.string().regex(/^\d+\.\d+\.\d+$/).describe("Release version (semver, e.g. 1.2.0)."),
+      dir: z.string().optional().describe("Target repo directory; defaults to the release repo dir from settings."),
+    },
+    annotations: RW,
+  }, async ({ version, dir }) => {
+    try {
+      const s = ctx.getSettings();
+      const releaseDir = expandTilde(dir ?? s.releaseDir);
+      if (!releaseDir) return fail(new Error("no release dir: pass `dir` or set the release repo directory in settings"));
+      const previous = readPluginVersion(releaseDir) ?? null;
+      const summary = await runExport(app, {
+        outputDir: releaseDir, pluginName: s.pluginName, fields: fieldsOf(s),
+        assetsRoot: expandTilde(s.assetsRoot), version,
+      });
+      return ok({
+        version, previous,
+        skills: summary.skills, agents: summary.agents, assets: summary.assets, removed: summary.removed,
+        errors: summary.errors, warnings: summary.warnings, outputDir: summary.outputDir,
+        note: "Packaged only — commit & tag in the repo to publish.",
       });
     } catch (e) { return fail(e); }
   });

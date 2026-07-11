@@ -189,3 +189,48 @@ test("crosscutting agent fans into scope agents as a specialist, not a vertical 
   assert.doesNotMatch(surveyor.content, /## Cross-cutting specialists/, "a specialist doesn't itself get the block");
   assert.equal(tree.find((n) => n.name === "surveyor").crosscutting, true);
 });
+
+test("skill passthrough: documented SKILL.md fields are emitted verbatim", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("s.md", {
+      type: "skill", name: "wrap-up",
+      "user-invocable": false, "disable-model-invocation": true,
+      "allowed-tools": ["Bash", "Read"], context: "fork", "argument-hint": "[scope]",
+    }, []),
+  ], OPTS);
+  const skill = find(generated, "skills/wrap-up/SKILL.md");
+  assert.match(skill.content, /user-invocable: false/);
+  assert.match(skill.content, /disable-model-invocation: true/);
+  assert.match(skill.content, /allowed-tools: \[Bash, Read\]/);
+  assert.match(skill.content, /context: fork/);
+  assert.match(skill.content, /argument-hint: "\[scope\]"/);
+});
+
+test("skill passthrough: non-allowlisted keys (tags, aliases, …) are not emitted", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("s.md", { type: "skill", name: "s", tags: ["jd/skill"], aliases: ["x"], created: "2026-01-01" }, []),
+  ], OPTS);
+  const skill = find(generated, "skills/s/SKILL.md");
+  assert.doesNotMatch(skill.content, /tags:/);
+  assert.doesNotMatch(skill.content, /aliases:/);
+  assert.doesNotMatch(skill.content, /created:/);
+});
+
+test("skill passthrough: nested values are dropped with a warning, not [object Object]", () => {
+  const { generated, warnings } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("s.md", { type: "skill", name: "s", arguments: { scope: "the scope" }, context: "fork" }, []),
+  ], OPTS);
+  const skill = find(generated, "skills/s/SKILL.md");
+  assert.doesNotMatch(skill.content, /\[object Object\]/);
+  assert.doesNotMatch(skill.content, /arguments:/);
+  assert.match(skill.content, /context: fork/, "scalar sibling still passes through");
+  assert.ok(warnings.some((w) => /passthrough field `arguments` has a nested value/.test(w)));
+});
+
+test("toYaml: comma inside an array item forces block style with quoting", () => {
+  const y = toYaml({ "allowed-tools": ["Bash(ls, cat)", "Read"] });
+  assert.match(y, /allowed-tools:\n\s+- "Bash\(ls, cat\)"\n\s+- Read/);
+});

@@ -7,7 +7,7 @@ const production = process.argv.includes("production");
 const external = [
   "obsidian", "electron",
   "@codemirror/state", "@codemirror/view", "@lezer/common",
-  "node:fs", "node:os", "node:path",
+  "node:fs", "node:os", "node:path", "node:child_process",
 ];
 
 // Static skills shipped inside the plugin, embedded at build time (src/static-skills.ts

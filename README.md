@@ -32,10 +32,18 @@ tree and compiles it:
 - a **`type: policy`** note injects shared context into every agent in its `parent`'s
   subtree (no parent ⇒ global);
 - edges are **validated** (unresolved / wrong-type / multiple parents, cycles, unreachable,
-  depth past the 5-level nesting cap).
+  depth past the 5-level nesting cap);
+- a skill's **supporting files** (scripts, references) live at the same relative path in a
+  parallel filesystem tree (the *Supporting-files tree* setting; iCloud-evicted files are
+  downloaded first) and are bundled into the generated `skills/<name>/` dir;
+- skill notes may set the documented SKILL.md keys (`user-invocable`, `allowed-tools`,
+  `context`, …) and they **pass through** to the generated skill;
+- **Export release to repo** packages the identical plugin into a git checkout and stamps
+  a version into `.claude-plugin/plugin.json` — commit & tag there to publish.
 
 The plugin also serves a **`vault-skills` MCP server**, so an agent can validate, inspect,
-export, and mark notes without the Obsidian UI (`vault_skills_{validate,tree,export,mark}`).
+export, release, and mark notes without the Obsidian UI
+(`vault_skills_{validate,tree,export,release,mark}`).
 
 See [`docs/frontmatter-convention.md`](docs/frontmatter-convention.md) (authoring) and
 [`docs/spec-frontmatter-tree.md`](docs/spec-frontmatter-tree.md) (full rules).
