@@ -15,6 +15,35 @@ export function filterLive(discoveries: Discovery[], exists: (p: string) => bool
   return discoveries.filter((d) => { try { return exists(d.socket_path); } catch { return false; } });
 }
 
+/**
+ * Probe whether a discovery's socket has a live listener, not merely a leftover
+ * socket file. A crashed or force-quit Obsidian leaves the unix socket file
+ * behind (nothing unlinks it), so file existence alone reports a dead vault as
+ * "live" — which makes resolveTarget see a phantom second vault and fatal on
+ * "multiple vaults open". An actual connect distinguishes the two:
+ * ECONNREFUSED/ENOENT ⇒ dead, connect ⇒ alive.
+ */
+export function probeSocket(
+  d: Discovery,
+  connect: (p: string) => net.Socket = net.createConnection,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = connect(d.socket_path);
+    const done = (v: boolean): void => { sock.destroy(); resolve(v); };
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+  });
+}
+
+/** Filter to discoveries whose socket actually accepts a connection, probed concurrently. */
+export async function filterConnectable(
+  discoveries: Discovery[],
+  probe: (d: Discovery) => Promise<boolean> = probeSocket,
+): Promise<Discovery[]> {
+  const flags = await Promise.all(discoveries.map((d) => probe(d).catch(() => false)));
+  return discoveries.filter((_, i) => flags[i]);
+}
+
 export type Target =
   | { kind: "ok"; chosen: Discovery }
   | { kind: "wait" }
@@ -84,7 +113,10 @@ if (process.argv[1] && process.argv[1].endsWith("bridge.mjs")) {
   (async () => {
     for (;;) {
       const all = loadDiscoveries();
-      const target = resolveTarget(filterLive(all), pick);
+      // filterLive is a cheap existence prefilter; filterConnectable then prunes
+      // stale-but-present sockets so a dead vault can't masquerade as a second one.
+      const live = await filterConnectable(filterLive(all));
+      const target = resolveTarget(live, pick);
       if (target.kind === "fatal") fail(target.message);
       if (target.kind === "ok") {
         const sock = await tryConnect(target.chosen);
