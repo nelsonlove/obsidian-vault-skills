@@ -8,6 +8,8 @@ export interface VaultSkillsSettings {
   fieldMode: "prefix" | "nested";
   fieldPrefix: string;
   fieldKey: string;
+  assetsRoot: string;
+  releaseDir: string;
 }
 
 export const DEFAULT_SETTINGS: VaultSkillsSettings = {
@@ -17,6 +19,8 @@ export const DEFAULT_SETTINGS: VaultSkillsSettings = {
   fieldMode: "prefix",
   fieldPrefix: "", // blank prefix = bare top-level fields (type, parent, …)
   fieldKey: "vault-skills",
+  assetsRoot: "", // blank = no supporting-files tree
+  releaseDir: "", // blank = release export disabled
 };
 
 export class VaultSkillsSettingTab extends PluginSettingTab {
@@ -54,6 +58,26 @@ export class VaultSkillsSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(this.plugin.settings.exportOnSave).onChange(async (v) => {
           this.plugin.settings.exportOnSave = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Supporting-files tree")
+      .setDesc("Root of a filesystem tree that parallels the vault (e.g. ~/Documents in a Johnny Decimal setup). A skill note at <dir>/<name>.md bundles every file under <root>/<dir>/<name>/ into its generated skill, next to SKILL.md. iCloud-evicted files are downloaded first. Leave blank to disable. ~ is expanded.")
+      .addText((t) =>
+        t.setValue(this.plugin.settings.assetsRoot).onChange(async (v) => {
+          this.plugin.settings.assetsRoot = v.trim();
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Release repo directory")
+      .setDesc("A git checkout that the 'Export release to repo' command targets — it writes the full plugin there and stamps the version you choose into .claude-plugin/plugin.json. Commit/tag yourself. Leave blank to disable. ~ is expanded.")
+      .addText((t) =>
+        t.setValue(this.plugin.settings.releaseDir).onChange(async (v) => {
+          this.plugin.settings.releaseDir = v.trim();
           await this.plugin.saveSettings();
         }),
       );

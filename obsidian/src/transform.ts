@@ -63,6 +63,7 @@ interface Node {
   model?: string;
   crosscutting: boolean;
   slot?: string;
+  extra: Record<string, unknown>;
   body: string;
   // resolved:
   parent: Node | null;
@@ -80,6 +81,18 @@ interface Policy {
 }
 
 const SYNTH_ROOT_PATH = " synth-root";
+
+/** Documented SKILL.md frontmatter keys passed through verbatim from a skill note
+ *  (Claude Code silently ignores unknown keys, so this is a curated allowlist rather
+ *  than pass-everything — it keeps Obsidian housekeeping fields like `tags`/`aliases`
+ *  out of the generated skill). `hooks` is excluded: it is a nested object and the
+ *  flat YAML emitter here deliberately doesn't render nesting. */
+export const SKILL_PASSTHROUGH_FIELDS = [
+  "when_to_use", "argument-hint", "arguments",
+  "disable-model-invocation", "user-invocable",
+  "allowed-tools", "disallowed-tools",
+  "model", "effort", "context", "agent", "paths", "shell",
+] as const;
 
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
@@ -102,9 +115,11 @@ export function toYaml(obj: Record<string, unknown>): string {
     if (v == null || v === "" || (Array.isArray(v) && v.length === 0)) continue;
     if (Array.isArray(v)) {
       const items = v.map(String);
-      if (items.some((e) => /[:#]/.test(e))) {
+      // Flow style is only safe when no item needs quoting; a comma inside an unquoted
+      // flow item would split it into two on parse.
+      if (items.some((e) => /[:#,]/.test(e))) {
         out.push(`${k}:`);
-        for (const e of items) out.push(`  - ${/[:#"'\n]/.test(e) ? JSON.stringify(e) : e}`);
+        for (const e of items) out.push(`  - ${/[:#"'\n,]/.test(e) ? JSON.stringify(e) : e}`);
       } else {
         out.push(`${k}: [${items.join(", ")}]`);
       }
@@ -141,6 +156,18 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     const kind: Kind | null = fm.type === "agent" ? "agent" : fm.type === "skill" ? "skill" : null;
     if (!kind) continue;
     const fileBase = fileBaseOf(note.path);
+    // Passthrough values must survive the flat YAML emitter: scalars and arrays of
+    // scalars only. Nested values would render as "[object Object]" — drop with a warning.
+    const isScalar = (x: unknown): boolean => ["string", "number", "boolean"].includes(typeof x);
+    const extra: Record<string, unknown> = {};
+    if (kind === "skill") {
+      for (const f of SKILL_PASSTHROUGH_FIELDS) {
+        const v = fm[f];
+        if (v == null) continue;
+        if (isScalar(v) || (Array.isArray(v) && v.every(isScalar))) extra[f] = v;
+        else warnings.push(`${note.path}: passthrough field \`${f}\` has a nested value — dropped (only scalars and lists of scalars are exported)`);
+      }
+    }
     nodes.push({
       kind,
       path: note.path,
@@ -155,6 +182,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       model: str(fm.model),
       crosscutting: fm.crosscutting === true,
       slot: str(fm.slot),
+      extra,
       body: note.body.trim(),
       parent: null, children: [], ownedSkills: [], level: -1, genName: "", valid: true,
     });
@@ -174,6 +202,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       kind: "agent", path: SYNTH_ROOT_PATH, isRoot: true, parentPaths: [],
       nameBase: "vault", label: "Vault",
       rawDesc: "General vault agent — routes each request to the appropriate sub-agent.",
+      extra: {},
       body: "You are the general agent for this vault. Understand each request and delegate to the appropriate sub-agent; coordinate across sub-agents yourself when a request spans several.",
       crosscutting: false, parent: null, children: [], ownedSkills: [], level: 0, genName: "", valid: true,
     };
@@ -275,7 +304,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     if (!n.valid) continue;
 
     if (n.kind === "skill") {
-      const fmOut = toYaml({ name: n.genName, description: describe(n), version: n.version });
+      const fmOut = toYaml({ name: n.genName, description: describe(n), version: n.version, ...n.extra });
       generated.push({ kind: "skill", relOut: `skills/${n.genName}/SKILL.md`, from: n.path,
         content: `${fmOut}\n\n${provenanceFor(n.path)}\n\n${n.body}\n` });
       continue;

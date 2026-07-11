@@ -1,8 +1,8 @@
 import { Plugin, Notice } from "obsidian";
-import { runExport } from "./exporter.js";
+import { runExport, fieldView } from "./exporter.js";
 import { expandTilde } from "./paths.js";
 import { DEFAULT_SETTINGS, VaultSkillsSettingTab, type VaultSkillsSettings } from "./settings.js";
-import { cmdValidate, cmdTree, cmdMark } from "./commands.js";
+import { cmdValidate, cmdTree, cmdMark, cmdRelease } from "./commands.js";
 import { UnixSocketListener } from "./mcp/socket-transport.js";
 import { buildMcpServer } from "./mcp/server.js";
 import { writeBridge, writeDiscovery, removeDiscovery } from "./mcp/discovery.js";
@@ -28,13 +28,18 @@ export default class VaultSkillsPlugin extends Plugin {
     this.addCommand({ id: "validate", name: "Validate tree", callback: () => void cmdValidate(this) });
     this.addCommand({ id: "tree", name: "Show tree", callback: () => void cmdTree(this) });
     this.addCommand({ id: "mark", name: "Mark note as skill / agent / policy", callback: () => void cmdMark(this) });
+    this.addCommand({ id: "release", name: "Export release to repo", callback: () => void cmdRelease(this) });
 
-    // Optional: re-export when a skill/agent note changes.
+    // Optional: re-export when a skill/agent/policy note changes. Read the type through
+    // the configured field mode — a bare fm.type check would miss prefixed/nested fields
+    // and false-positive on unrelated notes that happen to carry a bare `type:` key.
     this.registerEvent(
       this.app.metadataCache.on("changed", (file) => {
         if (!this.settings.exportOnSave) return;
-        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-        if (fm && (fm.type === "skill" || fm.type === "agent")) void this.export(true);
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+        if (!fm) return;
+        const { view } = fieldView(fm, { mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey });
+        if (view.type === "skill" || view.type === "agent" || view.type === "policy") void this.export(true);
       }),
     );
 
@@ -58,6 +63,7 @@ export default class VaultSkillsPlugin extends Plugin {
         outputDir,
         pluginName: this.settings.pluginName,
         fields: { mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey },
+        assetsRoot: expandTilde(this.settings.assetsRoot),
       });
 
       const issue = (label: string, items: string[]) =>

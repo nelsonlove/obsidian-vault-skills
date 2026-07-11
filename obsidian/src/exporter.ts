@@ -1,8 +1,9 @@
 import type { App } from "obsidian";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { transformAll, type NoteInput, type TreeNode } from "./transform.js";
+import { transformAll, SKILL_PASSTHROUGH_FIELDS, type NoteInput, type TreeNode } from "./transform.js";
 import { STATIC_FILES } from "./static-skills.js";
+import { assetDirFor, collectAssets, copyAsset, type CollectAssetsOptions } from "./assets.js";
 
 const MANIFEST_NAME = ".vault-skills-manifest.json";
 
@@ -20,11 +21,20 @@ export interface ExportOptions {
   pluginName: string;
   pluginDescription?: string;
   fields?: FieldConfig;
+  /** Root of a parallel filesystem tree holding skills' supporting files (see assets.ts).
+   *  Empty/unset ⇒ no supporting files are bundled. */
+  assetsRoot?: string;
+  /** When set, write this version into the output's .claude-plugin/plugin.json
+   *  (creating or updating it) — used by the release export. */
+  version?: string;
+  /** Test hook: overrides for iCloud materialization (downloader, poll, timeout). */
+  assetOptions?: CollectAssetsOptions;
 }
 
 export interface ExportSummary {
   skills: number;
   agents: number;
+  assets: number;
   removed: number;
   warnings: string[];
   errors: string[];
@@ -53,12 +63,14 @@ function resolveParents(app: App, sourcePath: string, v: unknown): string[] {
   });
 }
 
-// The vault-skills fields the transform reads (parent is handled separately, resolved to paths).
-const VS_FIELDS = ["type", "root", "name", "id", "label", "description", "version", "tools", "model", "crosscutting", "slot"];
+// The vault-skills fields the transform reads (parent is handled separately, resolved to
+// paths), plus the SKILL.md passthrough fields — all namespaced the same way.
+const VS_FIELDS = [...new Set(["type", "root", "name", "id", "label", "description", "version", "tools", "model",
+  "crosscutting", "slot", ...SKILL_PASSTHROUGH_FIELDS])];
 
 /** Extract a bare view of the vault-skills fields (+ the raw parent value) per the field mode,
  *  so the pure transform stays namespace-agnostic. */
-function fieldView(fm: Record<string, unknown>, cfg: FieldConfig): { view: Record<string, unknown>; parent: unknown } {
+export function fieldView(fm: Record<string, unknown>, cfg: FieldConfig): { view: Record<string, unknown>; parent: unknown } {
   if (cfg.mode === "nested") {
     const nested = (fm[cfg.key] && typeof fm[cfg.key] === "object" ? fm[cfg.key] : {}) as Record<string, unknown>;
     return { view: nested, parent: nested.parent };
@@ -95,7 +107,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
   const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
 
-  ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription);
+  ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription, opts.version);
 
   // Overwrite: remove previously-generated files (tracked in the manifest), then write.
   const manifestPath = path.join(opts.outputDir, MANIFEST_NAME);
@@ -110,7 +122,39 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     ...STATIC_FILES.map((s) => ({ kind: "skill" as const, relOut: s.relOut, content: s.content, from: "(static)" })),
   ];
 
-  const nextFiles = files.map((g) => g.relOut);
+  // Supporting files: each skill note may have a parallel folder of assets (scripts,
+  // references) that gets bundled into its generated skills/<name>/ dir. Asset trouble
+  // (unreadable dir, iCloud timeout) degrades to a warning for that skill — it must
+  // never abort the export. A file that fails to materialize keeps its previously
+  // exported copy rather than having stale-cleanup delete it.
+  const assetCopies: { src: string; relOut: string }[] = [];
+  const retained: string[] = [];
+  if (opts.assetsRoot) {
+    for (const g of files) {
+      if (g.kind !== "skill" || !g.from.endsWith(".md")) continue; // skip static/synthesized
+      const dir = assetDirFor(opts.assetsRoot, g.from);
+      const skillDir = path.dirname(g.relOut);
+      try {
+        const { files: assets, failed, warnings: assetWarnings } = await collectAssets(dir, opts.assetOptions);
+        warnings.push(...assetWarnings);
+        for (const a of assets) {
+          if (a.rel === "SKILL.md") { warnings.push(`${dir}/SKILL.md: supporting file would overwrite the generated SKILL.md — skipped`); continue; }
+          assetCopies.push({ src: a.abs, relOut: `${skillDir}/${a.rel}` });
+        }
+        for (const rel of failed) {
+          const relOut = `${skillDir}/${rel}`;
+          if (prev.includes(relOut)) {
+            retained.push(relOut);
+            warnings.push(`${relOut}: kept the previously exported copy`);
+          }
+        }
+      } catch (e) {
+        warnings.push(`${dir}: could not read supporting files — ${e instanceof Error ? e.message : String(e)}; skipped`);
+      }
+    }
+  }
+
+  const nextFiles = [...files.map((g) => g.relOut), ...assetCopies.map((a) => a.relOut), ...retained];
   const toRemove = prev.filter((p) => !nextFiles.includes(p));
   for (const rel of toRemove) {
     const abs = path.join(opts.outputDir, rel);
@@ -124,17 +168,25 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, g.content);
   }
+  for (const a of assetCopies) {
+    try {
+      copyAsset(a.src, path.join(opts.outputDir, a.relOut));
+    } catch (e) {
+      warnings.push(`${a.relOut}: copy failed — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   fs.writeFileSync(manifestPath, JSON.stringify({
     generatedFrom: "obsidian-vault-skills",
     vault: vaultPath ?? null,
-    count: files.length,
+    count: nextFiles.length,
     files: nextFiles.sort(),
   }, null, 2) + "\n");
 
   return {
     skills: files.filter((g) => g.kind === "skill").length,
     agents: files.filter((g) => g.kind === "agent").length,
+    assets: assetCopies.length,
     removed: toRemove.length,
     warnings,
     errors,
@@ -185,14 +237,34 @@ export function markFrontmatter(input: MarkInput, fields: FieldConfig = DEFAULT_
   return out;
 }
 
-/** Make sure the output dir is a valid Claude Code plugin (create manifest if absent). */
-function ensurePluginManifest(outputDir: string, name: string, description?: string): void {
+/** Make sure the output dir is a valid Claude Code plugin (create manifest if absent).
+ *  When `version` is given (release export), set it on the manifest — creating the file
+ *  or updating an existing one in place, preserving its other fields. */
+function ensurePluginManifest(outputDir: string, name: string, description?: string, version?: string): void {
   const file = path.join(outputDir, ".claude-plugin", "plugin.json");
-  if (fs.existsSync(file)) return;
+  if (fs.existsSync(file)) {
+    if (!version) return;
+    let manifest: Record<string, unknown>;
+    try { manifest = JSON.parse(fs.readFileSync(file, "utf8")); } catch {
+      // Never clobber a manifest we can't parse — its fields (description, author, …)
+      // would be silently lost.
+      throw new Error(`${file} is not valid JSON — fix or remove it, then re-run the release export`);
+    }
+    fs.writeFileSync(file, JSON.stringify({ name, ...manifest, version }, null, 2) + "\n");
+    return;
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({
     name,
     description: description || `Skills and agents exported from an Obsidian vault by ${name}.`,
-    version: "0.1.0",
+    version: version ?? "0.1.0",
   }, null, 2) + "\n");
+}
+
+/** Read the version from an existing plugin manifest (for suggesting the next release). */
+export function readPluginVersion(outputDir: string): string | undefined {
+  try {
+    const v = JSON.parse(fs.readFileSync(path.join(outputDir, ".claude-plugin", "plugin.json"), "utf8")).version;
+    return typeof v === "string" ? v : undefined;
+  } catch { return undefined; }
 }
