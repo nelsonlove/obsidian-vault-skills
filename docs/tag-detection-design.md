@@ -52,8 +52,8 @@ behavior is identical until they opt in.
 // pure — no `obsidian` runtime import, fully testable
 type Kind3 = "skill" | "agent" | "policy";
 
-extractTags(cache): string[]        // merge frontmatter `tags:` (stored un-#'d)
-                                    // + inline `cache.tags[].tag`; normalize to `#tag`
+extractTags(fm): string[]           // normalize frontmatter `tags:` (list or string,
+                                    // stored un-#'d) → `#tag`; null entries skipped
 tagKind(tags: string[], prefix): Kind3 | null | "ambiguous"
 ```
 
@@ -62,10 +62,12 @@ tagKind(tags: string[], prefix): Kind3 | null | "ambiguous"
 - If a note carries two different kind-tags (e.g. `#agent/skill` **and**
   `#agent/agent`) → `"ambiguous"` → the note is skipped with a warning.
 
-`extractTags` reads the plain cache shape (`cache.frontmatter?.tags`, an array or a
-string; and `cache.tags` = `[{ tag: "#…" }]`). No `getAllTags` import — that would
-be a runtime `obsidian` dependency and break the node test runner, which stubs
-`app` by hand and never imports `obsidian`.
+`extractTags` reads **only** the note's frontmatter `tags:` — not body/inline `#tags`.
+A kind declaration is metadata (so it belongs in frontmatter), this matches the "tags
+only in frontmatter" vault convention, and it avoids classifying a note that merely
+mentions a kind tag in prose or racing the metadata cache's inline-tag reindex. It
+takes the plain `fm` object (no `getAllTags` import — that runtime `obsidian` dependency
+would break the node test runner, which stubs `app` by hand and never imports `obsidian`).
 
 ### `collectNotes` (`exporter.ts`) — the one gate
 
@@ -75,16 +77,18 @@ collectNotes(app, cfg, warnings?): NoteInput[]
 
 Per markdown file:
 
-1. `fm = getFileCache(file)?.frontmatter` (unchanged) and `cache = getFileCache(file)`.
+1. `fm = getFileCache(file)?.frontmatter`; skip if absent (both modes key off frontmatter).
 2. `{ view, parent } = fieldView(fm, cfg)` — unchanged; extracts parent/description/etc.
-3. Resolve kind:
+3. Resolve kind via `detectKind(view, fm, cfg)`:
    - `frontmatter` mode → `normKind(view.type)` (current behavior).
-   - `tags` mode → `tagKind(extractTags(cache), cfg.tagPrefix)`; `"ambiguous"` →
+   - `tags` mode → `tagKind(extractTags(fm), cfg.tagPrefix)`; `"ambiguous"` →
      push a warning and skip.
-4. If no kind → skip. Otherwise **set `view.type = kind`** and push the note.
+4. If no kind → skip. Otherwise push `{ ...view, type: kind }`.
 
-Because step 4 writes `view.type`, `transform.ts` and the `analyzeVault` policy
-count keep reading `frontmatter.type` with zero changes.
+Step 4 copies the view (it must never mutate `view` — in nested mode `fieldView` returns
+Obsidian's live cache object by reference) and normalizes the kind into `type`, so
+`transform.ts` and the `analyzeVault` policy count keep reading `frontmatter.type` with
+zero changes.
 
 `warnings?` is a new **optional** sink parameter. `runExport` and `analyzeVault`
 pass their existing warning arrays so ambiguity surfaces in the export Notice; the
@@ -95,9 +99,9 @@ existing test call sites omit it and keep compiling unchanged.
 A `DetectConfig` extends `FieldConfig` with `typeSource` and `tagPrefix`. Functions
 that classify notes (`collectNotes`, `analyzeVault`, `runExport` via `opts.fields`,
 the save handler, the mark helpers) take `DetectConfig`; `fieldView` still takes the
-narrower `FieldConfig`. `main.ts`, `commands.ts`, and `mcp/tools.ts` build the
-config from settings via a small `detectOf(settings)` helper (parallel to the
-existing `fieldsOf`).
+narrower `FieldConfig`. `main.ts`, `commands.ts`, and `mcp/tools.ts` all build the
+config from settings via one shared `detectConfigFromSettings(settings)` helper
+(exported from `settings.ts`) — a single place to update when a field is added.
 
 ### Write path — `mark` (`markFrontmatter` + `applyMark`)
 
@@ -129,10 +133,10 @@ tag-marked notes trigger re-export too.
 
 - Pure: `tagKind` (each kind, no-match, ambiguous, blank-prefix bare tags,
   case-insensitivity) and `extractTags` (frontmatter list, frontmatter string,
-  inline, merge/dedupe).
-- `collectNotes` in tags mode via an extended mock (`getFileCache` returns
-  `{ frontmatter, tags }`); asserts kind detection, ambiguity skip + warning, and
-  that parent/description still come from frontmatter.
+  null-entry skip, no tags key).
+- `collectNotes` in tags mode: asserts kind detection, ambiguity skip + warning,
+  that parent still resolves from frontmatter, and that the live cache frontmatter
+  object is **not** mutated (nested mode).
 - `markFrontmatter` + `applyMark`: tags-mode append, dedupe, frontmatter-mode
   unchanged.
 - `transform.test.mjs` untouched (transform unchanged) — a guard that the seam held.

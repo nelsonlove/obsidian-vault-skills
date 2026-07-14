@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type VaultSkillsPlugin from "./main.js";
+import type { DetectConfig } from "./exporter.js";
 
 export interface VaultSkillsSettings {
   outputDir: string;
@@ -26,6 +27,17 @@ export const DEFAULT_SETTINGS: VaultSkillsSettings = {
   assetsRoot: "", // blank = no supporting-files tree
   releaseDir: "", // blank = release export disabled
 };
+
+/** The one place that maps settings → the exporter's detection + field config. */
+export function detectConfigFromSettings(s: VaultSkillsSettings): DetectConfig {
+  return {
+    mode: s.fieldMode,
+    prefix: s.fieldPrefix,
+    key: s.fieldKey,
+    typeSource: s.typeSource,
+    tagPrefix: s.tagPrefix,
+  };
+}
 
 export class VaultSkillsSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: VaultSkillsPlugin) {
@@ -103,7 +115,7 @@ export class VaultSkillsSettingTab extends PluginSettingTab {
       const p = this.plugin.settings.tagPrefix;
       new Setting(containerEl)
         .setName("Tag prefix")
-        .setDesc(`Kind tags are #${p}skill, #${p}agent, #${p}policy. Leave blank for bare #skill / #agent / #policy. Matched case-insensitively.`)
+        .setDesc(`Kind tags are #${p}skill, #${p}agent, #${p}policy (read from frontmatter tags, case-insensitive). Leave blank for bare #skill / #agent / #policy — but those collide with everyday tags, so a namespaced prefix is safer.`)
         .addText((t) =>
           t.setValue(this.plugin.settings.tagPrefix).onChange(async (v) => {
             this.plugin.settings.tagPrefix = v.trim();

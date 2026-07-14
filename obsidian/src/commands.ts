@@ -1,15 +1,10 @@
 import { App, FuzzySuggestModal, Modal, Notice, Setting } from "obsidian";
 import type VaultSkillsPlugin from "./main.js";
-import { analyzeVault, applyMark, collectNotes, markFrontmatter, readPluginVersion, runExport, type DetectConfig, type MarkInput } from "./exporter.js";
+import { analyzeVault, applyMark, collectNotes, markFrontmatter, readPluginVersion, runExport, type MarkInput } from "./exporter.js";
+import { detectConfigFromSettings } from "./settings.js";
 import { expandTilde } from "./paths.js";
 
-const fieldsOf = (p: VaultSkillsPlugin): DetectConfig => ({
-  mode: p.settings.fieldMode,
-  prefix: p.settings.fieldPrefix,
-  key: p.settings.fieldKey,
-  typeSource: p.settings.typeSource,
-  tagPrefix: p.settings.tagPrefix,
-});
+const fieldsOf = (p: VaultSkillsPlugin) => detectConfigFromSettings(p.settings);
 const base = (p: string): string => (p.split("/").pop() ?? "").replace(/\.md$/, "");
 
 /** Simple scrollable text modal for validate/tree output. */

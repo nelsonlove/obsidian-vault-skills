@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { collectNotes, extractTags, tagKind, markFrontmatter, applyMark } from "../src/exporter.ts";
 
-// App stand-in that carries per-note inline `tags` in the cache alongside frontmatter.
+// App stand-in resolving wikilinks by basename; a note's kind tags live in its frontmatter `tags`.
 function mockApp(notes) {
   const files = notes.map((n) => ({ path: n.path, basename: n.path.replace(/\.md$/, "").split("/").pop() }));
   const byPath = new Map(notes.map((n) => [n.path, n]));
@@ -12,16 +12,17 @@ function mockApp(notes) {
       cachedRead: async (f) => byPath.get(f.path).content ?? "body",
     },
     metadataCache: {
-      getFileCache: (f) => ({ frontmatter: byPath.get(f.path).frontmatter, tags: byPath.get(f.path).tags }),
+      getFileCache: (f) => ({ frontmatter: byPath.get(f.path).frontmatter }),
       getFirstLinkpathDest: (lp) => files.find((f) => f.basename === lp || f.path === lp || f.path === `${lp}.md`) ?? null,
     },
   };
 }
 
-test("extractTags merges frontmatter list, frontmatter string, and inline tags → normalized #tags", () => {
-  assert.deepEqual(extractTags({ frontmatter: { tags: ["agent/skill", "x"] } }), ["#agent/skill", "#x"]);
-  assert.deepEqual(extractTags({ frontmatter: { tags: "agent/skill x" } }), ["#agent/skill", "#x"]);
-  assert.deepEqual(extractTags({ tags: [{ tag: "#agent/agent" }] }), ["#agent/agent"]);
+test("extractTags normalizes frontmatter tags (list or string) to #tags; skips null; ignores body tags", () => {
+  assert.deepEqual(extractTags({ tags: ["agent/skill", "x"] }), ["#agent/skill", "#x"]);
+  assert.deepEqual(extractTags({ tags: "agent/skill x" }), ["#agent/skill", "#x"]);
+  assert.deepEqual(extractTags({ tags: ["agent/skill", null] }), ["#agent/skill"]); // null list entry skipped, not #null
+  assert.deepEqual(extractTags({}), []); // no tags key
   assert.deepEqual(extractTags(null), []);
 });
 
@@ -33,19 +34,28 @@ test("tagKind matches #{prefix}{kind} case-insensitively; blank prefix = bare ta
   assert.equal(tagKind(["#agent/skill", "#agent/agent"], "agent/"), "ambiguous");
 });
 
-test("collectNotes in tags mode reads the kind tag; parent/description stay frontmatter; type: ignored", async () => {
+test("collectNotes in tags mode reads the kind tag; parent stays frontmatter; type: ignored", async () => {
   const notes = [
-    { path: "grants.md", frontmatter: { name: "grants" }, tags: [{ tag: "#agent/agent" }], content: "body" },
+    { path: "grants.md", frontmatter: { name: "grants", tags: ["agent/agent"] }, content: "body" },
     { path: "sweep.md", frontmatter: { name: "sweep", parent: "[[grants]]", tags: ["agent/skill"] }, content: "body" },
     { path: "plain.md", frontmatter: { type: "agent" }, content: "body" }, // bare type: — ignored in tags mode
   ];
   const cfg = { mode: "prefix", prefix: "", key: "", typeSource: "tags", tagPrefix: "agent/" };
   const got = await collectNotes(mockApp(notes), cfg);
-  assert.equal(got.length, 2, "grants (inline) + sweep (frontmatter); plain.md ignored");
+  assert.equal(got.length, 2, "grants + sweep by tag; plain.md (only type:) ignored");
   assert.equal(got.find((n) => n.path === "grants.md").frontmatter.type, "agent");
   const sweep = got.find((n) => n.path === "sweep.md");
   assert.equal(sweep.frontmatter.type, "skill");
   assert.deepEqual(sweep.parentPaths, ["grants.md"], "parent still resolved from frontmatter");
+});
+
+test("collectNotes does not mutate the live cache frontmatter (nested mode)", async () => {
+  const live = { "vault-skills": { name: "g" }, tags: ["agent/agent"] }; // Obsidian's live cache object
+  const got = await collectNotes(mockApp([{ path: "g.md", frontmatter: live, content: "body" }]),
+    { mode: "nested", prefix: "", key: "vault-skills", typeSource: "tags", tagPrefix: "agent/" });
+  assert.equal(got.length, 1);
+  assert.equal(got[0].frontmatter.type, "agent", "kind normalized onto the returned note");
+  assert.equal(live["vault-skills"].type, undefined, "live nested cache object left untouched");
 });
 
 test("collectNotes in tags mode skips ambiguous notes with a warning", async () => {

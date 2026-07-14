@@ -34,22 +34,20 @@ export function normKind(v: unknown): Kind3 | null {
   return v === "skill" || v === "agent" || v === "policy" ? v : null;
 }
 
-/** Merge a note's frontmatter `tags` (Obsidian stores them without `#`) and inline
- *  `cache.tags[].tag` into normalized `#tag` strings. Pure — takes the plain cache shape so it
- *  needs no `obsidian` runtime import (which would break the node test runner). */
-export function extractTags(
-  cache: { frontmatter?: Record<string, unknown>; tags?: { tag?: unknown }[] } | null | undefined,
-): string[] {
-  if (!cache) return [];
+/** Normalize a note's frontmatter `tags` (Obsidian stores them without `#`, as a list or a
+ *  string) into `#tag` strings. Body/inline tags are intentionally NOT read: a kind declaration
+ *  is metadata, so it lives in frontmatter — this avoids classifying a note that merely mentions
+ *  `#agent/skill` in prose, and matches the "tags only in frontmatter" vault convention. Pure. */
+export function extractTags(fm: Record<string, unknown> | null | undefined): string[] {
+  const raw = fm?.tags;
   const out: string[] = [];
-  const push = (raw: unknown): void => {
-    const s = String(raw).trim();
+  const push = (v: unknown): void => {
+    if (v == null) return; // skip null/empty list entries rather than emitting `#null`
+    const s = String(v).trim();
     if (s) out.push(s.startsWith("#") ? s : `#${s}`);
   };
-  const fmTags = cache.frontmatter?.tags;
-  if (Array.isArray(fmTags)) for (const t of fmTags) push(t);
-  else if (typeof fmTags === "string") for (const t of fmTags.split(/[,\s]+/)) push(t);
-  for (const t of cache.tags ?? []) if (t?.tag != null) push(t.tag);
+  if (Array.isArray(raw)) for (const t of raw) push(t);
+  else if (typeof raw === "string") for (const t of raw.split(/[,\s]+/)) push(t);
   return out;
 }
 
@@ -61,13 +59,14 @@ export function tagKind(tags: string[], prefix: string): Kind3 | null | "ambiguo
   return hits.length === 0 ? null : hits.length > 1 ? "ambiguous" : hits[0];
 }
 
-/** Resolve a note's kind per the detection mode. `view` is the field-mode frontmatter view. */
+/** Resolve a note's kind per the detection mode. `view` is the field-mode frontmatter view;
+ *  `fm` is the raw note frontmatter (for tags mode). */
 export function detectKind(
   view: Record<string, unknown>,
-  cache: { frontmatter?: Record<string, unknown>; tags?: { tag?: unknown }[] } | null | undefined,
+  fm: Record<string, unknown> | null | undefined,
   cfg: DetectConfig,
 ): Kind3 | null | "ambiguous" {
-  if ((cfg.typeSource ?? "frontmatter") === "tags") return tagKind(extractTags(cache), cfg.tagPrefix ?? DEFAULT_TAG_PREFIX);
+  if ((cfg.typeSource ?? "frontmatter") === "tags") return tagKind(extractTags(fm), cfg.tagPrefix ?? DEFAULT_TAG_PREFIX);
   return normKind(view.type);
 }
 
@@ -139,25 +138,23 @@ export function fieldView(fm: Record<string, unknown>, cfg: FieldConfig): { view
 /** Collect every note marked a skill/agent/policy — by its `type:` field (frontmatter mode) or a
  *  `#{tagPrefix}{kind}` tag (tags mode). Ambiguous tag notes are skipped, reported via `warnings`. */
 export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIELDS, warnings?: string[]): Promise<NoteInput[]> {
-  const tagsMode = (fields.typeSource ?? "frontmatter") === "tags";
   const notes: NoteInput[] = [];
   for (const file of app.vault.getMarkdownFiles()) {
-    const cache = app.metadataCache.getFileCache(file) as { frontmatter?: Record<string, unknown>; tags?: { tag?: unknown }[] } | null;
-    const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-    // Frontmatter mode needs frontmatter to hold `type:`; tags mode can qualify on an inline tag alone.
-    if (!fm && !tagsMode) continue;
-    const { view, parent } = fieldView(fm ?? {}, fields);
-    const kind = detectKind(view, cache, fields);
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+    if (!fm) continue; // both modes key off frontmatter (type: field, or the note's tags: list)
+    const { view, parent } = fieldView(fm, fields);
+    const kind = detectKind(view, fm, fields);
     if (kind === "ambiguous") {
       warnings?.push(`${file.path}: multiple vault-skills kind tags — skipped (tag it as exactly one of skill/agent/policy)`);
       continue;
     }
     if (!kind) continue;
-    view.type = kind; // normalize so the transform (and policy count) read a single source of truth
     const raw = await app.vault.cachedRead(file);
     notes.push({
+      // Copy the view (never mutate: in nested mode `view` is Obsidian's live cache object) and
+      // normalize the kind into `type` so the transform + policy count read one source of truth.
+      frontmatter: { ...view, type: kind },
       path: file.path,
-      frontmatter: view,
       body: stripFrontmatter(raw),
       parentPaths: resolveParents(app, file.path, parent),
     });

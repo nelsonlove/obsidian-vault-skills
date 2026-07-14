@@ -1,7 +1,7 @@
 import { Plugin, Notice } from "obsidian";
 import { runExport, fieldView, detectKind, type DetectConfig } from "./exporter.js";
 import { expandTilde } from "./paths.js";
-import { DEFAULT_SETTINGS, VaultSkillsSettingTab, type VaultSkillsSettings } from "./settings.js";
+import { DEFAULT_SETTINGS, VaultSkillsSettingTab, detectConfigFromSettings, type VaultSkillsSettings } from "./settings.js";
 import { cmdValidate, cmdTree, cmdMark, cmdRelease } from "./commands.js";
 import { UnixSocketListener } from "./mcp/socket-transport.js";
 import { buildMcpServer } from "./mcp/server.js";
@@ -36,10 +36,11 @@ export default class VaultSkillsPlugin extends Plugin {
     this.registerEvent(
       this.app.metadataCache.on("changed", (file) => {
         if (!this.settings.exportOnSave) return;
-        const cache = this.app.metadataCache.getFileCache(file);
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (!fm) return;
         const cfg = this.detectConfig();
-        const { view } = fieldView(cache?.frontmatter ?? {}, cfg);
-        const kind = detectKind(view, cache, cfg);
+        const { view } = fieldView(fm, cfg);
+        const kind = detectKind(view, fm, cfg);
         if (kind && kind !== "ambiguous") void this.export(true);
       }),
     );
@@ -49,13 +50,7 @@ export default class VaultSkillsPlugin extends Plugin {
 
   /** Detection + field-mode config assembled from the current settings. */
   private detectConfig(): DetectConfig {
-    return {
-      mode: this.settings.fieldMode,
-      prefix: this.settings.fieldPrefix,
-      key: this.settings.fieldKey,
-      typeSource: this.settings.typeSource,
-      tagPrefix: this.settings.tagPrefix,
-    };
+    return detectConfigFromSettings(this.settings);
   }
 
   async loadSettings(): Promise<void> {
