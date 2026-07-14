@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type VaultSkillsPlugin from "./main.js";
+import type { FieldConfig } from "./exporter.js";
 
 export interface VaultSkillsSettings {
   outputDir: string;
@@ -10,6 +11,12 @@ export interface VaultSkillsSettings {
   fieldKey: string;
   assetsRoot: string;
   releaseDir: string;
+}
+
+/** The frontmatter field-namespacing config derived from settings — the single mapping
+ *  shared by the export, the read-only commands, and the export-on-save relevance check. */
+export function fieldsOf(s: VaultSkillsSettings): FieldConfig {
+  return { mode: s.fieldMode, prefix: s.fieldPrefix, key: s.fieldKey };
 }
 
 export const DEFAULT_SETTINGS: VaultSkillsSettings = {

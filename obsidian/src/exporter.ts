@@ -16,6 +16,14 @@ export interface FieldConfig {
 
 export const DEFAULT_FIELDS: FieldConfig = { mode: "prefix", prefix: "", key: "vault-skills" };
 
+/** The note `type` values that produce plugin output (skills, agents, and the policies
+ *  folded into agents). Single source of truth for "does this note participate in the
+ *  export" — shared by collection (collectNotes) and the export-on-save relevance check. */
+export const EXPORTABLE_TYPES = ["skill", "agent", "policy"] as const;
+export function isExportableType(type: unknown): type is (typeof EXPORTABLE_TYPES)[number] {
+  return (EXPORTABLE_TYPES as readonly unknown[]).includes(type);
+}
+
 export interface ExportOptions {
   outputDir: string;
   pluginName: string;
@@ -88,7 +96,7 @@ export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELD
     const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
     if (!fm) continue;
     const { view, parent } = fieldView(fm, fields);
-    if (view.type !== "skill" && view.type !== "agent" && view.type !== "policy") continue;
+    if (!isExportableType(view.type)) continue;
     const raw = await app.vault.cachedRead(file);
     notes.push({
       path: file.path,
