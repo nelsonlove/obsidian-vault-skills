@@ -1,8 +1,9 @@
-import { Plugin, Notice } from "obsidian";
-import { runExport, fieldView } from "./exporter.js";
+import { Plugin, Notice, type TFile } from "obsidian";
+import { runExport } from "./exporter.js";
 import { expandTilde } from "./paths.js";
 import { DEFAULT_SETTINGS, VaultSkillsSettingTab, type VaultSkillsSettings } from "./settings.js";
 import { cmdValidate, cmdTree, cmdMark, cmdRelease } from "./commands.js";
+import { debounce, handleNoteChanged } from "./export-trigger.js";
 import { UnixSocketListener } from "./mcp/socket-transport.js";
 import { buildMcpServer } from "./mcp/server.js";
 import { writeBridge, writeDiscovery, removeDiscovery } from "./mcp/discovery.js";
@@ -30,17 +31,23 @@ export default class VaultSkillsPlugin extends Plugin {
     this.addCommand({ id: "mark", name: "Mark note as skill / agent / policy", callback: () => void cmdMark(this) });
     this.addCommand({ id: "release", name: "Export release to repo", callback: () => void cmdRelease(this) });
 
-    // Optional: re-export when a skill/agent/policy note changes. Read the type through
-    // the configured field mode — a bare fm.type check would miss prefixed/nested fields
-    // and false-positive on unrelated notes that happen to carry a bare `type:` key.
+    // Optional: re-export when a skill/agent/policy note changes. The export is debounced
+    // so a rename's burst of change events (the file rename plus the cascaded [[wikilink]]
+    // rewrites in child notes) collapses into one export against the settled tree — exporting
+    // mid-burst would validate half-rewritten parent links and drop children with spurious
+    // "unresolved parent" errors. Relevance is read through the configured field mode so a
+    // bare `type:` on an unrelated note doesn't false-positive. See export-trigger.ts.
+    // Re-check the setting at fire time: it may be toggled off during the debounce window.
+    const requestExport = debounce(() => { if (this.settings.exportOnSave) void this.export(true); }, 750);
     this.registerEvent(
-      this.app.metadataCache.on("changed", (file) => {
-        if (!this.settings.exportOnSave) return;
-        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-        if (!fm) return;
-        const { view } = fieldView(fm, { mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey });
-        if (view.type === "skill" || view.type === "agent" || view.type === "policy") void this.export(true);
-      }),
+      this.app.metadataCache.on("changed", (file) =>
+        handleNoteChanged(file, {
+          isEnabled: () => this.settings.exportOnSave,
+          fields: () => ({ mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey }),
+          getFrontmatter: (f) => this.app.metadataCache.getFileCache(f as TFile)?.frontmatter as Record<string, unknown> | undefined,
+          requestExport,
+        }),
+      ),
     );
 
     void this.startServer();
