@@ -9,20 +9,34 @@
 // the cache has settled and every cascaded link rewrite is done, so validation always runs
 // against the consistent post-rename tree.
 
-import { fieldView, type FieldConfig } from "./exporter.js";
+import { fieldView, isExportableType, type FieldConfig } from "./exporter.js";
+
+/** A debounced trigger, plus a `cancel()` to drop a pending call (e.g. on plugin unload,
+ *  so a queued export never fires against a torn-down plugin). */
+export interface Debounced {
+  (): void;
+  cancel(): void;
+}
 
 /** Minimal trailing debounce: `fn` runs once, `waitMs` after the last call. Kept local
  *  (rather than Obsidian's `debounce`) so the coalescing is unit-testable outside the
  *  Obsidian runtime. */
-export function debounce(fn: () => void, waitMs: number): () => void {
+export function debounce(fn: () => void, waitMs: number): Debounced {
   let handle: ReturnType<typeof setTimeout> | null = null;
-  return () => {
+  const trigger = (() => {
     if (handle !== null) clearTimeout(handle);
     handle = setTimeout(() => {
       handle = null;
       fn();
     }, waitMs);
+  }) as Debounced;
+  trigger.cancel = () => {
+    if (handle !== null) {
+      clearTimeout(handle);
+      handle = null;
+    }
   };
+  return trigger;
 }
 
 export interface ChangeTriggerDeps {
@@ -44,5 +58,5 @@ export function handleNoteChanged(file: unknown, deps: ChangeTriggerDeps): void 
   const fm = deps.getFrontmatter(file);
   if (!fm) return;
   const { view } = fieldView(fm, deps.fields());
-  if (view.type === "skill" || view.type === "agent" || view.type === "policy") deps.requestExport();
+  if (isExportableType(view.type)) deps.requestExport();
 }

@@ -30,6 +30,21 @@ test("debounce coalesces a rename's burst of change events into a single export 
   }
 });
 
+test("cancel() drops a pending export (e.g. on plugin unload)", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let runs = 0;
+    const requestExport = debounce(() => runs++, 750);
+    requestExport();
+    mock.timers.tick(500);
+    requestExport.cancel();
+    mock.timers.tick(1000);
+    assert.equal(runs, 0, "a cancelled debounce must never fire");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test("only skill/agent/policy changes request an export", () => {
   const requested = [];
   const deps = (fm) => ({

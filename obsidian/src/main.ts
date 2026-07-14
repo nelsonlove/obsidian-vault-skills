@@ -1,9 +1,9 @@
 import { Plugin, Notice, type TFile } from "obsidian";
 import { runExport } from "./exporter.js";
 import { expandTilde } from "./paths.js";
-import { DEFAULT_SETTINGS, VaultSkillsSettingTab, type VaultSkillsSettings } from "./settings.js";
+import { DEFAULT_SETTINGS, VaultSkillsSettingTab, fieldsOf, type VaultSkillsSettings } from "./settings.js";
 import { cmdValidate, cmdTree, cmdMark, cmdRelease } from "./commands.js";
-import { debounce, handleNoteChanged } from "./export-trigger.js";
+import { debounce, handleNoteChanged, type Debounced } from "./export-trigger.js";
 import { UnixSocketListener } from "./mcp/socket-transport.js";
 import { buildMcpServer } from "./mcp/server.js";
 import { writeBridge, writeDiscovery, removeDiscovery } from "./mcp/discovery.js";
@@ -13,6 +13,8 @@ import { findClaudeBinary, claudeIsRegistered, claudeRegister } from "./mcp/clau
 export default class VaultSkillsPlugin extends Plugin {
   declare settings: VaultSkillsSettings;
   private exporting = false;
+  private exportQueued = false;
+  private requestExport: Debounced | null = null;
   private listener: UnixSocketListener | null = null;
   private slug = "";
 
@@ -38,14 +40,14 @@ export default class VaultSkillsPlugin extends Plugin {
     // "unresolved parent" errors. Relevance is read through the configured field mode so a
     // bare `type:` on an unrelated note doesn't false-positive. See export-trigger.ts.
     // Re-check the setting at fire time: it may be toggled off during the debounce window.
-    const requestExport = debounce(() => { if (this.settings.exportOnSave) void this.export(true); }, 750);
+    this.requestExport = debounce(() => { if (this.settings.exportOnSave) void this.export(true); }, 750);
     this.registerEvent(
       this.app.metadataCache.on("changed", (file) =>
         handleNoteChanged(file, {
           isEnabled: () => this.settings.exportOnSave,
-          fields: () => ({ mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey }),
+          fields: () => fieldsOf(this.settings),
           getFrontmatter: (f) => this.app.metadataCache.getFileCache(f as TFile)?.frontmatter as Record<string, unknown> | undefined,
-          requestExport,
+          requestExport: () => this.requestExport?.(),
         }),
       ),
     );
@@ -62,30 +64,35 @@ export default class VaultSkillsPlugin extends Plugin {
   }
 
   async export(quiet = false): Promise<void> {
-    if (this.exporting) return;
+    // A request arriving mid-export would otherwise be dropped by this guard, leaving the
+    // output stale for that change; mark it and re-run once the in-flight export finishes.
+    if (this.exporting) { this.exportQueued = true; return; }
     this.exporting = true;
     try {
-      const outputDir = expandTilde(this.settings.outputDir);
-      const summary = await runExport(this.app, {
-        outputDir,
-        pluginName: this.settings.pluginName,
-        fields: { mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey },
-        assetsRoot: expandTilde(this.settings.assetsRoot),
-      });
+      do {
+        this.exportQueued = false;
+        const outputDir = expandTilde(this.settings.outputDir);
+        const summary = await runExport(this.app, {
+          outputDir,
+          pluginName: this.settings.pluginName,
+          fields: fieldsOf(this.settings),
+          assetsRoot: expandTilde(this.settings.assetsRoot),
+        });
 
-      const issue = (label: string, items: string[]) =>
-        items.length ? `\n${items.length} ${label}: ${items[0]}${items.length > 1 ? " …" : ""}` : "";
-      const err = issue("error(s)", summary.errors);
-      const warn = issue("warning(s)", summary.warnings);
+        const issue = (label: string, items: string[]) =>
+          items.length ? `\n${items.length} ${label}: ${items[0]}${items.length > 1 ? " …" : ""}` : "";
+        const err = issue("error(s)", summary.errors);
+        const warn = issue("warning(s)", summary.warnings);
 
-      new Notice(
-        `Vault Skills: exported ${summary.skills} skill(s) + ${summary.agents} agent(s)` +
-          (summary.removed ? `, removed ${summary.removed}` : "") +
-          err +
-          warn +
-          `\nRun /reload-plugins in Claude Code to load.`,
-        quiet ? 4000 : summary.errors.length ? 12000 : 8000,
-      );
+        new Notice(
+          `Vault Skills: exported ${summary.skills} skill(s) + ${summary.agents} agent(s)` +
+            (summary.removed ? `, removed ${summary.removed}` : "") +
+            err +
+            warn +
+            `\nRun /reload-plugins in Claude Code to load.`,
+          quiet ? 4000 : summary.errors.length ? 12000 : 8000,
+        );
+      } while (this.exportQueued);
     } catch (e) {
       new Notice(`Vault Skills: export failed — ${e instanceof Error ? e.message : String(e)}`, 10000);
     } finally {
@@ -125,6 +132,7 @@ export default class VaultSkillsPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
+    this.requestExport?.cancel(); // drop any pending export-on-save so it can't fire post-unload
     if (this.listener) await this.listener.close();
     if (this.slug) removeDiscovery(this.slug);
   }
