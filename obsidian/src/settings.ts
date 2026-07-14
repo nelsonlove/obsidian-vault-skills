@@ -15,6 +15,13 @@ export interface VaultSkillsSettings {
   releaseDir: string;
 }
 
+/** The detection + field-namespacing config derived from settings — the single mapping shared by
+ *  the export, the read-only commands, the mark write-path, and the export-on-save relevance check.
+ *  Returns a DetectConfig (a superset of FieldConfig), so field-only consumers work unchanged. */
+export function fieldsOf(s: VaultSkillsSettings): DetectConfig {
+  return { mode: s.fieldMode, prefix: s.fieldPrefix, key: s.fieldKey, typeSource: s.typeSource, tagPrefix: s.tagPrefix };
+}
+
 export const DEFAULT_SETTINGS: VaultSkillsSettings = {
   outputDir: "~/.claude/skills/vault-skills",
   pluginName: "vault-skills",
@@ -27,17 +34,6 @@ export const DEFAULT_SETTINGS: VaultSkillsSettings = {
   assetsRoot: "", // blank = no supporting-files tree
   releaseDir: "", // blank = release export disabled
 };
-
-/** The one place that maps settings → the exporter's detection + field config. */
-export function detectConfigFromSettings(s: VaultSkillsSettings): DetectConfig {
-  return {
-    mode: s.fieldMode,
-    prefix: s.fieldPrefix,
-    key: s.fieldKey,
-    typeSource: s.typeSource,
-    tagPrefix: s.tagPrefix,
-  };
-}
 
 export class VaultSkillsSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: VaultSkillsPlugin) {

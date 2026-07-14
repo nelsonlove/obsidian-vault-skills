@@ -26,12 +26,14 @@ export interface DetectConfig extends FieldConfig {
 export const DEFAULT_FIELDS: FieldConfig = { mode: "prefix", prefix: "", key: "vault-skills" };
 export const DEFAULT_TAG_PREFIX = "agent/";
 
-const KINDS = ["skill", "agent", "policy"] as const;
-type Kind3 = (typeof KINDS)[number];
-
-/** Normalize a raw frontmatter `type` value to a known kind, or null. */
-export function normKind(v: unknown): Kind3 | null {
-  return v === "skill" || v === "agent" || v === "policy" ? v : null;
+/** The note `type` values that produce plugin output (skills, agents, and the policies
+ *  folded into agents). Single source of truth for "does this note participate in the
+ *  export" — shared by collection (collectNotes), kind detection, and the export-on-save
+ *  relevance check. */
+export const EXPORTABLE_TYPES = ["skill", "agent", "policy"] as const;
+type Kind3 = (typeof EXPORTABLE_TYPES)[number];
+export function isExportableType(type: unknown): type is Kind3 {
+  return (EXPORTABLE_TYPES as readonly unknown[]).includes(type);
 }
 
 /** Normalize a note's frontmatter `tags` (Obsidian stores them without `#`, as a list or a
@@ -57,7 +59,7 @@ export function extractTags(fm: Record<string, unknown> | null | undefined): str
  *  "ambiguous" when more than one distinct kind tag is present. */
 export function tagKind(tags: string[], prefix: string): Kind3 | null | "ambiguous" {
   const have = new Set(tags.map((t) => t.toLowerCase()));
-  const hits = KINDS.filter((k) => have.has(`#${prefix}${k}`.toLowerCase()));
+  const hits = EXPORTABLE_TYPES.filter((k) => have.has(`#${prefix}${k}`.toLowerCase()));
   return hits.length === 0 ? null : hits.length > 1 ? "ambiguous" : hits[0];
 }
 
@@ -69,7 +71,7 @@ export function detectKind(
   cfg: DetectConfig,
 ): Kind3 | null | "ambiguous" {
   if ((cfg.typeSource ?? "frontmatter") === "tags") return tagKind(extractTags(fm), cfg.tagPrefix ?? DEFAULT_TAG_PREFIX);
-  return normKind(view.type);
+  return isExportableType(view.type) ? view.type : null;
 }
 
 export interface ExportOptions {
@@ -313,7 +315,7 @@ export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT
     const prefix = fields.tagPrefix ?? DEFAULT_TAG_PREFIX;
     addTags.push(`#${prefix}${input.type}`);
     // strip every sibling kind tag first, so re-marking swaps the kind (not two → "ambiguous")
-    for (const k of KINDS) removeTags.push(`#${prefix}${k}`);
+    for (const k of EXPORTABLE_TYPES) removeTags.push(`#${prefix}${k}`);
   } else flat.type = input.type;
   if (input.root) flat.root = true;
   if (input.parent) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;

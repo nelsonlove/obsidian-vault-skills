@@ -1,10 +1,9 @@
 import { App, FuzzySuggestModal, Modal, Notice, Setting } from "obsidian";
 import type VaultSkillsPlugin from "./main.js";
 import { analyzeVault, applyMark, collectNotes, markFrontmatter, readPluginVersion, runExport, type MarkInput } from "./exporter.js";
-import { detectConfigFromSettings } from "./settings.js";
+import { fieldsOf } from "./settings.js";
 import { expandTilde } from "./paths.js";
 
-const fieldsOf = (p: VaultSkillsPlugin) => detectConfigFromSettings(p.settings);
 const base = (p: string): string => (p.split("/").pop() ?? "").replace(/\.md$/, "");
 
 /** Simple scrollable text modal for validate/tree output. */
@@ -58,7 +57,7 @@ function pick<T>(app: App, items: T[], label: (t: T) => string): Promise<T | und
 }
 
 export async function cmdValidate(plugin: VaultSkillsPlugin): Promise<void> {
-  const a = await analyzeVault(plugin.app, fieldsOf(plugin), plugin.settings.pluginName);
+  const a = await analyzeVault(plugin.app, fieldsOf(plugin.settings), plugin.settings.pluginName);
   const lines = [
     `${a.counts.agents} agents · ${a.counts.skills} skills · ${a.counts.policies} policies`,
     "",
@@ -69,7 +68,7 @@ export async function cmdValidate(plugin: VaultSkillsPlugin): Promise<void> {
 }
 
 export async function cmdTree(plugin: VaultSkillsPlugin): Promise<void> {
-  const a = await analyzeVault(plugin.app, fieldsOf(plugin), plugin.settings.pluginName);
+  const a = await analyzeVault(plugin.app, fieldsOf(plugin.settings), plugin.settings.pluginName);
   const byName = new Map(a.tree.map((n) => [n.name, n]));
   const lines: string[] = [];
   const walk = (name: string, depth: number): void => {
@@ -86,7 +85,7 @@ export async function cmdTree(plugin: VaultSkillsPlugin): Promise<void> {
 export async function cmdMark(plugin: VaultSkillsPlugin): Promise<void> {
   const file = plugin.app.workspace.getActiveFile();
   if (!file) { new Notice("Vault Skills: no active note."); return; }
-  const fields = fieldsOf(plugin);
+  const fields = fieldsOf(plugin.settings);
 
   const type = await pick(plugin.app, ["agent", "skill", "policy"] as const, (t) => t);
   if (!type) return;
@@ -125,7 +124,7 @@ export async function cmdRelease(plugin: VaultSkillsPlugin): Promise<void> {
     const summary = await runExport(plugin.app, {
       outputDir: releaseDir,
       pluginName: plugin.settings.pluginName,
-      fields: fieldsOf(plugin),
+      fields: fieldsOf(plugin.settings),
       assetsRoot: expandTilde(plugin.settings.assetsRoot),
       version,
     });

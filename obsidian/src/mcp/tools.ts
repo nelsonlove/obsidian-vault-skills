@@ -4,7 +4,7 @@ import type { App, TFile } from "obsidian";
 import { ok, fail } from "./helpers.js";
 import { analyzeVault, applyMark, runExport, markFrontmatter, readPluginVersion } from "../exporter.js";
 import { expandTilde } from "../paths.js";
-import { detectConfigFromSettings, type VaultSkillsSettings } from "../settings.js";
+import { fieldsOf, type VaultSkillsSettings } from "../settings.js";
 
 export interface ServerCtx {
   app: App;
@@ -12,7 +12,6 @@ export interface ServerCtx {
   getSettings: () => VaultSkillsSettings;
 }
 
-const fieldsOf = (s: VaultSkillsSettings) => detectConfigFromSettings(s);
 const RO = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const RW = { readOnlyHint: false };
 

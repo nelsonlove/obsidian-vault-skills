@@ -1,8 +1,9 @@
-import { Plugin, Notice } from "obsidian";
-import { runExport, fieldView, detectKind, type DetectConfig } from "./exporter.js";
+import { Plugin, Notice, type TFile } from "obsidian";
+import { runExport } from "./exporter.js";
 import { expandTilde } from "./paths.js";
-import { DEFAULT_SETTINGS, VaultSkillsSettingTab, detectConfigFromSettings, type VaultSkillsSettings } from "./settings.js";
+import { DEFAULT_SETTINGS, VaultSkillsSettingTab, fieldsOf, type VaultSkillsSettings } from "./settings.js";
 import { cmdValidate, cmdTree, cmdMark, cmdRelease } from "./commands.js";
+import { debounce, handleNoteChanged, type Debounced } from "./export-trigger.js";
 import { UnixSocketListener } from "./mcp/socket-transport.js";
 import { buildMcpServer } from "./mcp/server.js";
 import { writeBridge, writeDiscovery, removeDiscovery } from "./mcp/discovery.js";
@@ -12,6 +13,7 @@ import { findClaudeBinary, claudeIsRegistered, claudeRegister } from "./mcp/clau
 export default class VaultSkillsPlugin extends Plugin {
   declare settings: VaultSkillsSettings;
   private exporting = false;
+  private requestExport: Debounced | null = null;
   private listener: UnixSocketListener | null = null;
   private slug = "";
 
@@ -30,27 +32,33 @@ export default class VaultSkillsPlugin extends Plugin {
     this.addCommand({ id: "mark", name: "Mark note as skill / agent / policy", callback: () => void cmdMark(this) });
     this.addCommand({ id: "release", name: "Export release to repo", callback: () => void cmdRelease(this) });
 
-    // Optional: re-export when a skill/agent/policy note changes. Read the type through
-    // the configured field mode — a bare fm.type check would miss prefixed/nested fields
-    // and false-positive on unrelated notes that happen to carry a bare `type:` key.
+    // Optional: re-export when a skill/agent/policy note changes. The export is debounced
+    // so a rename's burst of change events (the file rename plus the cascaded [[wikilink]]
+    // rewrites in child notes) collapses into one export against the settled tree — exporting
+    // mid-burst would validate half-rewritten parent links and drop children with spurious
+    // "unresolved parent" errors. Relevance is read through the configured field mode so a
+    // bare `type:` on an unrelated note doesn't false-positive. See export-trigger.ts.
+    // Single gate for the export-on-save path: re-checks the setting at fire time (it may be
+    // toggled off during the debounce window) and, if an export is already in flight, simply
+    // re-arms itself so the change isn't lost — retrying every `wait` until the export settles
+    // rather than dropping the event or unconditionally re-running past an unload/toggle-off.
+    this.requestExport = debounce(() => {
+      if (!this.settings.exportOnSave) return;
+      if (this.exporting) { this.requestExport?.(); return; }
+      void this.export(true);
+    }, 750);
     this.registerEvent(
-      this.app.metadataCache.on("changed", (file) => {
-        if (!this.settings.exportOnSave) return;
-        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-        if (!fm) return;
-        const cfg = this.detectConfig();
-        const { view } = fieldView(fm, cfg);
-        const kind = detectKind(view, fm, cfg);
-        if (kind && kind !== "ambiguous") void this.export(true);
-      }),
+      this.app.metadataCache.on("changed", (file) =>
+        handleNoteChanged(file, {
+          isEnabled: () => this.settings.exportOnSave,
+          fields: () => fieldsOf(this.settings),
+          getFrontmatter: (f) => this.app.metadataCache.getFileCache(f as TFile)?.frontmatter as Record<string, unknown> | undefined,
+          requestExport: () => this.requestExport?.(),
+        }),
+      ),
     );
 
     void this.startServer();
-  }
-
-  /** Detection + field-mode config assembled from the current settings. */
-  private detectConfig(): DetectConfig {
-    return detectConfigFromSettings(this.settings);
   }
 
   async loadSettings(): Promise<void> {
@@ -62,6 +70,9 @@ export default class VaultSkillsPlugin extends Plugin {
   }
 
   async export(quiet = false): Promise<void> {
+    // Concurrency guard: a change arriving mid-export isn't lost — the export-on-save trigger
+    // re-arms itself while `exporting` is true (see onload), and manual invocations can just
+    // be retried by the user.
     if (this.exporting) return;
     this.exporting = true;
     try {
@@ -69,7 +80,7 @@ export default class VaultSkillsPlugin extends Plugin {
       const summary = await runExport(this.app, {
         outputDir,
         pluginName: this.settings.pluginName,
-        fields: this.detectConfig(),
+        fields: fieldsOf(this.settings),
         assetsRoot: expandTilde(this.settings.assetsRoot),
       });
 
@@ -125,6 +136,7 @@ export default class VaultSkillsPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
+    this.requestExport?.cancel(); // drop any pending export-on-save so it can't fire post-unload
     if (this.listener) await this.listener.close();
     if (this.slug) removeDiscovery(this.slug);
   }
