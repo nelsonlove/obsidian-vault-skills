@@ -72,11 +72,14 @@ Then a note is a skill/agent/policy when it carries the matching tag:
 - The tag decides the **kind only**. `parent`, `description`, `name`, `tools`, … are still
   read from frontmatter through the field mode above — tags can't express a `[[wikilink]]`
   parent or a description.
-- Kind tags are read from the note's frontmatter `tags:` (a list or a string), matched
-  **case-insensitively** — body/inline `#tags` are ignored, so a note that merely mentions a
-  kind tag in prose isn't classified. Set `tagPrefix` blank for bare `#skill`/`#agent`/`#policy`
-  — but mind that those bare tags then collide with any everyday use of them, so a namespaced
-  prefix (the `agent/` default) is safer.
+- Kind tags are read from the note's frontmatter `tags:` (or singular `tag:`; a list or a
+  string), matched **case-insensitively** — body/inline `#tags` are ignored, so a note that
+  merely mentions a kind tag in prose isn't classified. Set `tagPrefix` blank for bare
+  `#skill`/`#agent`/`#policy` — but mind that those bare tags then collide with any everyday use
+  of them, so a namespaced prefix (the `agent/` default) is safer.
+- The **Mark** command / `vault_skills_mark` tool swap the kind cleanly in tags mode: re-marking
+  a note strips any existing `#{prefix}{kind}` tag before adding the new one, so it never ends up
+  with two kind tags (which would read as ambiguous and be skipped).
 - In tags mode any `type:` field is **ignored**; in the default frontmatter mode tags are
   ignored. It's one or the other, vault-wide.
 - A note carrying **two** different kind tags (e.g. `#agent/skill` *and* `#agent/agent`) is

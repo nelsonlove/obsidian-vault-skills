@@ -39,15 +39,17 @@ export function normKind(v: unknown): Kind3 | null {
  *  is metadata, so it lives in frontmatter — this avoids classifying a note that merely mentions
  *  `#agent/skill` in prose, and matches the "tags only in frontmatter" vault convention. Pure. */
 export function extractTags(fm: Record<string, unknown> | null | undefined): string[] {
-  const raw = fm?.tags;
   const out: string[] = [];
   const push = (v: unknown): void => {
     if (v == null) return; // skip null/empty list entries rather than emitting `#null`
     const s = String(v).trim();
     if (s) out.push(s.startsWith("#") ? s : `#${s}`);
   };
-  if (Array.isArray(raw)) for (const t of raw) push(t);
-  else if (typeof raw === "string") for (const t of raw.split(/[,\s]+/)) push(t);
+  // Obsidian accepts both the plural `tags:` and singular `tag:` frontmatter keys.
+  for (const raw of [fm?.tags, fm?.tag]) {
+    if (Array.isArray(raw)) for (const t of raw) push(t);
+    else if (typeof raw === "string") for (const t of raw.split(/[,\s]+/)) push(t);
+  }
   return out;
 }
 
@@ -294,6 +296,9 @@ export interface MarkResult {
   set: Record<string, unknown>;
   /** Kind tags (with a leading `#`) to append to the note's `tags` — non-empty only in tags mode. */
   addTags: string[];
+  /** Kind tags (with a leading `#`) to strip from `tags` before appending — the whole
+   *  `#{prefix}{kind}` family, so re-marking replaces the kind rather than adding a second one. */
+  removeTags: string[];
 }
 
 /** Pure: how to mark a note as a given kind, honoring the field mode and detection mode. In tags
@@ -302,9 +307,14 @@ export interface MarkResult {
 export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT_FIELDS): MarkResult {
   const tagsMode = (fields.typeSource ?? "frontmatter") === "tags";
   const addTags: string[] = [];
+  const removeTags: string[] = [];
   const flat: Record<string, unknown> = {};
-  if (tagsMode) addTags.push(`#${fields.tagPrefix ?? DEFAULT_TAG_PREFIX}${input.type}`);
-  else flat.type = input.type;
+  if (tagsMode) {
+    const prefix = fields.tagPrefix ?? DEFAULT_TAG_PREFIX;
+    addTags.push(`#${prefix}${input.type}`);
+    // strip every sibling kind tag first, so re-marking swaps the kind (not two → "ambiguous")
+    for (const k of KINDS) removeTags.push(`#${prefix}${k}`);
+  } else flat.type = input.type;
   if (input.root) flat.root = true;
   if (input.parent) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
   if (input.description) flat.description = input.description;
@@ -316,21 +326,34 @@ export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT
     set = {};
     for (const [k, v] of Object.entries(flat)) set[fields.prefix + k] = v;
   }
-  return { set, addTags };
+  return { set, addTags, removeTags };
 }
 
 /** Apply a {@link markFrontmatter} result to a note's frontmatter object in place: assign the
- *  fields, then dedup-append each kind tag into `tags` (stored bare, without `#`, as Obsidian does). */
+ *  fields, then reconcile `tags` — strip the kind-tag family, then dedup-append the new kind tag
+ *  (stored bare, without `#`, as Obsidian does). A scalar/string `tags` value is split the same
+ *  way {@link extractTags} reads it, so pre-existing tags survive as distinct entries. */
 export function applyMark(fm: Record<string, unknown>, result: MarkResult): void {
   Object.assign(fm, result.set);
-  if (!result.addTags.length) return;
-  const existing = Array.isArray(fm.tags) ? fm.tags.slice() : fm.tags == null ? [] : [fm.tags];
-  const have = new Set(existing.map((t) => String(t).replace(/^#/, "").toLowerCase()));
-  for (const tag of result.addTags) {
-    const bare = tag.replace(/^#/, "");
-    if (!have.has(bare.toLowerCase())) {
-      existing.push(bare);
-      have.add(bare.toLowerCase());
+  const addTags = result.addTags ?? [];
+  const removeTags = result.removeTags ?? [];
+  if (!addTags.length && !removeTags.length) return;
+
+  const raw = fm.tags;
+  let existing: string[] =
+    Array.isArray(raw) ? raw.map(String)
+    : typeof raw === "string" ? raw.split(/[,\s]+/).filter(Boolean)
+    : raw == null ? [] : [String(raw)];
+  const bare = (t: string): string => t.replace(/^#/, "").toLowerCase();
+
+  const remove = new Set(removeTags.map(bare));
+  existing = existing.filter((t) => !remove.has(bare(t)));
+  const have = new Set(existing.map(bare));
+  for (const tag of addTags) {
+    const b = tag.replace(/^#/, "");
+    if (!have.has(b.toLowerCase())) {
+      existing.push(b);
+      have.add(b.toLowerCase());
     }
   }
   fm.tags = existing;

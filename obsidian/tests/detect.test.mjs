@@ -22,6 +22,7 @@ test("extractTags normalizes frontmatter tags (list or string) to #tags; skips n
   assert.deepEqual(extractTags({ tags: ["agent/skill", "x"] }), ["#agent/skill", "#x"]);
   assert.deepEqual(extractTags({ tags: "agent/skill x" }), ["#agent/skill", "#x"]);
   assert.deepEqual(extractTags({ tags: ["agent/skill", null] }), ["#agent/skill"]); // null list entry skipped, not #null
+  assert.deepEqual(extractTags({ tag: "agent/skill" }), ["#agent/skill"]); // singular `tag:` key also read
   assert.deepEqual(extractTags({}), []); // no tags key
   assert.deepEqual(extractTags(null), []);
 });
@@ -66,29 +67,41 @@ test("collectNotes in tags mode skips ambiguous notes with a warning", async () 
   assert.ok(warnings.some((w) => /multiple vault-skills kind tags/.test(w)));
 });
 
-test("markFrontmatter returns { set, addTags }: frontmatter mode writes type, tags mode appends a tag", () => {
-  // frontmatter mode — unchanged behavior, wrapped in { set, addTags: [] }
+test("markFrontmatter returns { set, addTags, removeTags }: frontmatter writes type, tags swaps the kind tag", () => {
+  // frontmatter mode — unchanged behavior, no tag churn
   assert.deepEqual(
     markFrontmatter({ type: "agent", parent: "research" }, { mode: "prefix", prefix: "", key: "vault-skills" }),
-    { set: { type: "agent", parent: "[[research]]" }, addTags: [] },
+    { set: { type: "agent", parent: "[[research]]" }, addTags: [], removeTags: [] },
   );
-  // tags mode — kind becomes a tag; parent stays a frontmatter field
+  // tags mode — kind becomes a tag; the whole kind family is marked for removal so re-marking swaps
   assert.deepEqual(
     markFrontmatter({ type: "skill", parent: "research" }, { mode: "prefix", prefix: "", key: "", typeSource: "tags", tagPrefix: "agent/" }),
-    { set: { parent: "[[research]]" }, addTags: ["#agent/skill"] },
+    { set: { parent: "[[research]]" }, addTags: ["#agent/skill"], removeTags: ["#agent/skill", "#agent/agent", "#agent/policy"] },
   );
 });
 
 test("applyMark assigns set fields and dedup-appends bare tags into fm.tags", () => {
   const fm1 = { tags: ["existing"] };
-  applyMark(fm1, { set: { parent: "[[g]]" }, addTags: ["#agent/skill"] });
+  applyMark(fm1, { set: { parent: "[[g]]" }, addTags: ["#agent/skill"], removeTags: [] });
   assert.deepEqual(fm1, { tags: ["existing", "agent/skill"], parent: "[[g]]" }, "tag stored without #");
 
   const fm2 = { tags: ["agent/skill"] };
-  applyMark(fm2, { set: {}, addTags: ["#agent/skill"] });
+  applyMark(fm2, { set: {}, addTags: ["#agent/skill"], removeTags: [] });
   assert.deepEqual(fm2.tags, ["agent/skill"], "no duplicate");
 
   const fm3 = {};
-  applyMark(fm3, { set: { type: "agent" }, addTags: [] });
+  applyMark(fm3, { set: { type: "agent" }, addTags: [], removeTags: [] });
   assert.deepEqual(fm3, { type: "agent" }, "frontmatter mode leaves tags untouched");
+});
+
+test("applyMark splits a scalar-string fm.tags so pre-existing tags survive as distinct entries", () => {
+  const fm = { tags: "foo, bar" }; // Obsidian scalar/string tag form
+  applyMark(fm, markFrontmatter({ type: "skill" }, { mode: "prefix", prefix: "", key: "", typeSource: "tags", tagPrefix: "agent/" }));
+  assert.deepEqual(fm.tags, ["foo", "bar", "agent/skill"], "foo/bar kept separate, not fused into one tag");
+});
+
+test("applyMark strips the sibling kind tag on re-mark (no ambiguous double-kind)", () => {
+  const fm = { tags: ["agent/skill", "keep"] };
+  applyMark(fm, markFrontmatter({ type: "agent" }, { mode: "prefix", prefix: "", key: "", typeSource: "tags", tagPrefix: "agent/" }));
+  assert.deepEqual(fm.tags, ["keep", "agent/agent"], "old #agent/skill removed, only one kind tag remains");
 });
