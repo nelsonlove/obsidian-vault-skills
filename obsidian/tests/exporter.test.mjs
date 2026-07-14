@@ -73,11 +73,11 @@ test("analyzeVault returns tree + counts + no errors for a valid vault", async (
 test("markFrontmatter honors the field mode", () => {
   const input = { type: "agent", parent: "research" };
   assert.deepEqual(markFrontmatter(input, { mode: "prefix", prefix: "", key: "vault-skills" }),
-    { type: "agent", parent: "[[research]]" });
+    { set: { type: "agent", parent: "[[research]]" }, addTags: [] });
   assert.deepEqual(markFrontmatter(input, { mode: "prefix", prefix: "vs-", key: "" }),
-    { "vs-type": "agent", "vs-parent": "[[research]]" });
+    { set: { "vs-type": "agent", "vs-parent": "[[research]]" }, addTags: [] });
   assert.deepEqual(markFrontmatter(input, { mode: "nested", prefix: "", key: "vault-skills" }),
-    { "vault-skills": { type: "agent", parent: "[[research]]" } });
+    { set: { "vault-skills": { type: "agent", parent: "[[research]]" } }, addTags: [] });
 });
 
 test("runExport writes the tree: root, child agent, owned skill, plugin.json, manifest", async () => {

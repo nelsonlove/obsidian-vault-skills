@@ -14,13 +14,68 @@ export interface FieldConfig {
   key: string;    // e.g. "vault-skills" → nested object (nested mode)
 }
 
+/** FieldConfig plus how a note's *kind* (skill/agent/policy) is declared. In "tags" mode the
+ *  kind comes from a `#{tagPrefix}{kind}` tag and any `type:` frontmatter is ignored; every other
+ *  field (parent, description, …) is still read from frontmatter per the FieldConfig. Both extras
+ *  are optional so a bare FieldConfig behaves exactly like frontmatter mode with the default prefix. */
+export interface DetectConfig extends FieldConfig {
+  typeSource?: "frontmatter" | "tags";
+  tagPrefix?: string; // e.g. "agent/" → #agent/skill, #agent/agent, #agent/policy
+}
+
 export const DEFAULT_FIELDS: FieldConfig = { mode: "prefix", prefix: "", key: "vault-skills" };
+export const DEFAULT_TAG_PREFIX = "agent/";
+
+const KINDS = ["skill", "agent", "policy"] as const;
+type Kind3 = (typeof KINDS)[number];
+
+/** Normalize a raw frontmatter `type` value to a known kind, or null. */
+export function normKind(v: unknown): Kind3 | null {
+  return v === "skill" || v === "agent" || v === "policy" ? v : null;
+}
+
+/** Merge a note's frontmatter `tags` (Obsidian stores them without `#`) and inline
+ *  `cache.tags[].tag` into normalized `#tag` strings. Pure — takes the plain cache shape so it
+ *  needs no `obsidian` runtime import (which would break the node test runner). */
+export function extractTags(
+  cache: { frontmatter?: Record<string, unknown>; tags?: { tag?: unknown }[] } | null | undefined,
+): string[] {
+  if (!cache) return [];
+  const out: string[] = [];
+  const push = (raw: unknown): void => {
+    const s = String(raw).trim();
+    if (s) out.push(s.startsWith("#") ? s : `#${s}`);
+  };
+  const fmTags = cache.frontmatter?.tags;
+  if (Array.isArray(fmTags)) for (const t of fmTags) push(t);
+  else if (typeof fmTags === "string") for (const t of fmTags.split(/[,\s]+/)) push(t);
+  for (const t of cache.tags ?? []) if (t?.tag != null) push(t.tag);
+  return out;
+}
+
+/** Which kind a set of tags declares under `prefix` (case-insensitive, exact leaf), or null;
+ *  "ambiguous" when more than one distinct kind tag is present. */
+export function tagKind(tags: string[], prefix: string): Kind3 | null | "ambiguous" {
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  const hits = KINDS.filter((k) => have.has(`#${prefix}${k}`.toLowerCase()));
+  return hits.length === 0 ? null : hits.length > 1 ? "ambiguous" : hits[0];
+}
+
+/** Resolve a note's kind per the detection mode. `view` is the field-mode frontmatter view. */
+export function detectKind(
+  view: Record<string, unknown>,
+  cache: { frontmatter?: Record<string, unknown>; tags?: { tag?: unknown }[] } | null | undefined,
+  cfg: DetectConfig,
+): Kind3 | null | "ambiguous" {
+  if ((cfg.typeSource ?? "frontmatter") === "tags") return tagKind(extractTags(cache), cfg.tagPrefix ?? DEFAULT_TAG_PREFIX);
+  return normKind(view.type);
+}
 
 export interface ExportOptions {
   outputDir: string;
   pluginName: string;
   pluginDescription?: string;
-  fields?: FieldConfig;
+  fields?: DetectConfig;
   /** Root of a parallel filesystem tree holding skills' supporting files (see assets.ts).
    *  Empty/unset ⇒ no supporting files are bundled. */
   assetsRoot?: string;
@@ -81,14 +136,24 @@ export function fieldView(fm: Record<string, unknown>, cfg: FieldConfig): { view
   return { view, parent: fm[cfg.prefix + "parent"] };
 }
 
-/** Collect every note whose (namespaced) frontmatter marks it a skill/agent/policy. */
-export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELDS): Promise<NoteInput[]> {
+/** Collect every note marked a skill/agent/policy — by its `type:` field (frontmatter mode) or a
+ *  `#{tagPrefix}{kind}` tag (tags mode). Ambiguous tag notes are skipped, reported via `warnings`. */
+export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIELDS, warnings?: string[]): Promise<NoteInput[]> {
+  const tagsMode = (fields.typeSource ?? "frontmatter") === "tags";
   const notes: NoteInput[] = [];
   for (const file of app.vault.getMarkdownFiles()) {
-    const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-    if (!fm) continue;
-    const { view, parent } = fieldView(fm, fields);
-    if (view.type !== "skill" && view.type !== "agent" && view.type !== "policy") continue;
+    const cache = app.metadataCache.getFileCache(file) as { frontmatter?: Record<string, unknown>; tags?: { tag?: unknown }[] } | null;
+    const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+    // Frontmatter mode needs frontmatter to hold `type:`; tags mode can qualify on an inline tag alone.
+    if (!fm && !tagsMode) continue;
+    const { view, parent } = fieldView(fm ?? {}, fields);
+    const kind = detectKind(view, cache, fields);
+    if (kind === "ambiguous") {
+      warnings?.push(`${file.path}: multiple vault-skills kind tags — skipped (tag it as exactly one of skill/agent/policy)`);
+      continue;
+    }
+    if (!kind) continue;
+    view.type = kind; // normalize so the transform (and policy count) read a single source of truth
     const raw = await app.vault.cachedRead(file);
     notes.push({
       path: file.path,
@@ -101,11 +166,13 @@ export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELD
 }
 
 export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
-  const notes = await collectNotes(app, opts.fields ?? DEFAULT_FIELDS);
+  const collectWarnings: string[] = [];
+  const notes = await collectNotes(app, opts.fields ?? DEFAULT_FIELDS, collectWarnings);
   // FileSystemAdapter exposes getBasePath(); duck-type it to keep `obsidian` type-only.
   const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
   const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
+  warnings.unshift(...collectWarnings);
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription, opts.version);
 
@@ -202,13 +269,14 @@ export interface Analysis {
 }
 
 /** Shared read-only core for `validate` and `tree`: collect + transform, no write. */
-export async function analyzeVault(app: App, fields: FieldConfig = DEFAULT_FIELDS, pluginName = "vault-skills"): Promise<Analysis> {
-  const notes = await collectNotes(app, fields);
+export async function analyzeVault(app: App, fields: DetectConfig = DEFAULT_FIELDS, pluginName = "vault-skills"): Promise<Analysis> {
+  const collectWarnings: string[] = [];
+  const notes = await collectNotes(app, fields, collectWarnings);
   const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
   const { tree, warnings, errors } = transformAll(notes, { pluginName, synthesizeRoot: true, vaultPath });
   return {
-    tree, errors, warnings,
+    tree, errors, warnings: [...collectWarnings, ...warnings],
     counts: {
       agents: tree.filter((n) => n.kind === "agent").length,
       skills: tree.filter((n) => n.kind === "skill").length,
@@ -224,17 +292,51 @@ export interface MarkInput {
   root?: boolean;
 }
 
-/** Pure: the frontmatter keys to set on a note to mark it, honoring the field mode. */
-export function markFrontmatter(input: MarkInput, fields: FieldConfig = DEFAULT_FIELDS): Record<string, unknown> {
-  const flat: Record<string, unknown> = { type: input.type };
+export interface MarkResult {
+  /** Frontmatter keys to Object.assign onto the note (already namespaced per field mode). */
+  set: Record<string, unknown>;
+  /** Kind tags (with a leading `#`) to append to the note's `tags` — non-empty only in tags mode. */
+  addTags: string[];
+}
+
+/** Pure: how to mark a note as a given kind, honoring the field mode and detection mode. In tags
+ *  mode the kind becomes a tag (`addTags`) instead of a `type:` field; parent/description/root
+ *  stay frontmatter fields in both modes. Apply with {@link applyMark}. */
+export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT_FIELDS): MarkResult {
+  const tagsMode = (fields.typeSource ?? "frontmatter") === "tags";
+  const addTags: string[] = [];
+  const flat: Record<string, unknown> = {};
+  if (tagsMode) addTags.push(`#${fields.tagPrefix ?? DEFAULT_TAG_PREFIX}${input.type}`);
+  else flat.type = input.type;
   if (input.root) flat.root = true;
   if (input.parent) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
   if (input.description) flat.description = input.description;
-  if (fields.mode === "nested") return { [fields.key]: flat };
-  // prefix mode — a blank prefix yields bare top-level fields
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(flat)) out[fields.prefix + k] = v;
-  return out;
+
+  let set: Record<string, unknown>;
+  if (fields.mode === "nested") set = Object.keys(flat).length ? { [fields.key]: flat } : {};
+  else {
+    // prefix mode — a blank prefix yields bare top-level fields
+    set = {};
+    for (const [k, v] of Object.entries(flat)) set[fields.prefix + k] = v;
+  }
+  return { set, addTags };
+}
+
+/** Apply a {@link markFrontmatter} result to a note's frontmatter object in place: assign the
+ *  fields, then dedup-append each kind tag into `tags` (stored bare, without `#`, as Obsidian does). */
+export function applyMark(fm: Record<string, unknown>, result: MarkResult): void {
+  Object.assign(fm, result.set);
+  if (!result.addTags.length) return;
+  const existing = Array.isArray(fm.tags) ? fm.tags.slice() : fm.tags == null ? [] : [fm.tags];
+  const have = new Set(existing.map((t) => String(t).replace(/^#/, "").toLowerCase()));
+  for (const tag of result.addTags) {
+    const bare = tag.replace(/^#/, "");
+    if (!have.has(bare.toLowerCase())) {
+      existing.push(bare);
+      have.add(bare.toLowerCase());
+    }
+  }
+  fm.tags = existing;
 }
 
 /** Make sure the output dir is a valid Claude Code plugin (create manifest if absent).

@@ -1,5 +1,5 @@
 import { Plugin, Notice } from "obsidian";
-import { runExport, fieldView } from "./exporter.js";
+import { runExport, fieldView, detectKind, type DetectConfig } from "./exporter.js";
 import { expandTilde } from "./paths.js";
 import { DEFAULT_SETTINGS, VaultSkillsSettingTab, type VaultSkillsSettings } from "./settings.js";
 import { cmdValidate, cmdTree, cmdMark, cmdRelease } from "./commands.js";
@@ -36,14 +36,26 @@ export default class VaultSkillsPlugin extends Plugin {
     this.registerEvent(
       this.app.metadataCache.on("changed", (file) => {
         if (!this.settings.exportOnSave) return;
-        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-        if (!fm) return;
-        const { view } = fieldView(fm, { mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey });
-        if (view.type === "skill" || view.type === "agent" || view.type === "policy") void this.export(true);
+        const cache = this.app.metadataCache.getFileCache(file);
+        const cfg = this.detectConfig();
+        const { view } = fieldView(cache?.frontmatter ?? {}, cfg);
+        const kind = detectKind(view, cache, cfg);
+        if (kind && kind !== "ambiguous") void this.export(true);
       }),
     );
 
     void this.startServer();
+  }
+
+  /** Detection + field-mode config assembled from the current settings. */
+  private detectConfig(): DetectConfig {
+    return {
+      mode: this.settings.fieldMode,
+      prefix: this.settings.fieldPrefix,
+      key: this.settings.fieldKey,
+      typeSource: this.settings.typeSource,
+      tagPrefix: this.settings.tagPrefix,
+    };
   }
 
   async loadSettings(): Promise<void> {
@@ -62,7 +74,7 @@ export default class VaultSkillsPlugin extends Plugin {
       const summary = await runExport(this.app, {
         outputDir,
         pluginName: this.settings.pluginName,
-        fields: { mode: this.settings.fieldMode, prefix: this.settings.fieldPrefix, key: this.settings.fieldKey },
+        fields: this.detectConfig(),
         assetsRoot: expandTilde(this.settings.assetsRoot),
       });
 

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { App, TFile } from "obsidian";
 import { ok, fail } from "./helpers.js";
-import { analyzeVault, runExport, markFrontmatter, readPluginVersion, type FieldConfig } from "../exporter.js";
+import { analyzeVault, applyMark, runExport, markFrontmatter, readPluginVersion, type DetectConfig } from "../exporter.js";
 import { expandTilde } from "../paths.js";
 import type { VaultSkillsSettings } from "../settings.js";
 
@@ -12,7 +12,7 @@ export interface ServerCtx {
   getSettings: () => VaultSkillsSettings;
 }
 
-const fieldsOf = (s: VaultSkillsSettings): FieldConfig => ({ mode: s.fieldMode, prefix: s.fieldPrefix, key: s.fieldKey });
+const fieldsOf = (s: VaultSkillsSettings): DetectConfig => ({ mode: s.fieldMode, prefix: s.fieldPrefix, key: s.fieldKey, typeSource: s.typeSource, tagPrefix: s.tagPrefix });
 const RO = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const RW = { readOnlyHint: false };
 
@@ -94,7 +94,7 @@ export function registerTools(server: McpServer, ctx: ServerCtx): void {
 
   server.registerTool("vault_skills_mark", {
     title: "Mark a note as skill / agent / policy",
-    description: "Set the vault-skills frontmatter on an existing note (honoring the field mode). Does not create the note or apply house style. Mutating.",
+    description: "Mark an existing note as a skill/agent/policy, honoring the vault's detection mode: in frontmatter mode it sets the `type` field; in tags mode it appends the configured kind tag (e.g. #agent/skill). Parent/description are written as frontmatter either way. Does not create the note or apply house style. Mutating.",
     inputSchema: {
       path: z.string().min(1).describe("Vault-relative path of the note to mark."),
       type: z.enum(["skill", "agent", "policy"]),
@@ -107,8 +107,8 @@ export function registerTools(server: McpServer, ctx: ServerCtx): void {
       const s = ctx.getSettings();
       const file = app.vault.getAbstractFileByPath(p);
       if (!file || !("extension" in file)) return fail(new Error(`not found: ${p}`));
-      const patch = markFrontmatter({ type, parent, description }, fieldsOf(s));
-      await app.fileManager.processFrontMatter(file as TFile, (fm: Record<string, unknown>) => { Object.assign(fm, patch); });
+      const result = markFrontmatter({ type, parent, description }, fieldsOf(s));
+      await app.fileManager.processFrontMatter(file as TFile, (fm: Record<string, unknown>) => { applyMark(fm, result); });
       return ok({ marked: p, type, parent: parent ?? null });
     } catch (e) { return fail(e); }
   });
