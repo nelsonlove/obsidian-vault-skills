@@ -2,9 +2,9 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { App, TFile } from "obsidian";
 import { ok, fail } from "./helpers.js";
-import { analyzeVault, runExport, markFrontmatter, readPluginVersion, type FieldConfig } from "../exporter.js";
+import { analyzeVault, runExport, markFrontmatter, readPluginVersion } from "../exporter.js";
 import { expandTilde } from "../paths.js";
-import type { VaultSkillsSettings } from "../settings.js";
+import { fieldsOf, type VaultSkillsSettings } from "../settings.js";
 
 export interface ServerCtx {
   app: App;
@@ -12,7 +12,6 @@ export interface ServerCtx {
   getSettings: () => VaultSkillsSettings;
 }
 
-const fieldsOf = (s: VaultSkillsSettings): FieldConfig => ({ mode: s.fieldMode, prefix: s.fieldPrefix, key: s.fieldKey });
 const RO = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const RW = { readOnlyHint: false };
 

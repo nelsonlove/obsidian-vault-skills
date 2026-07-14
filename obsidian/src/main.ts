@@ -13,7 +13,6 @@ import { findClaudeBinary, claudeIsRegistered, claudeRegister } from "./mcp/clau
 export default class VaultSkillsPlugin extends Plugin {
   declare settings: VaultSkillsSettings;
   private exporting = false;
-  private exportQueued = false;
   private requestExport: Debounced | null = null;
   private listener: UnixSocketListener | null = null;
   private slug = "";
@@ -39,8 +38,15 @@ export default class VaultSkillsPlugin extends Plugin {
     // mid-burst would validate half-rewritten parent links and drop children with spurious
     // "unresolved parent" errors. Relevance is read through the configured field mode so a
     // bare `type:` on an unrelated note doesn't false-positive. See export-trigger.ts.
-    // Re-check the setting at fire time: it may be toggled off during the debounce window.
-    this.requestExport = debounce(() => { if (this.settings.exportOnSave) void this.export(true); }, 750);
+    // Single gate for the export-on-save path: re-checks the setting at fire time (it may be
+    // toggled off during the debounce window) and, if an export is already in flight, simply
+    // re-arms itself so the change isn't lost — retrying every `wait` until the export settles
+    // rather than dropping the event or unconditionally re-running past an unload/toggle-off.
+    this.requestExport = debounce(() => {
+      if (!this.settings.exportOnSave) return;
+      if (this.exporting) { this.requestExport?.(); return; }
+      void this.export(true);
+    }, 750);
     this.registerEvent(
       this.app.metadataCache.on("changed", (file) =>
         handleNoteChanged(file, {
@@ -64,35 +70,33 @@ export default class VaultSkillsPlugin extends Plugin {
   }
 
   async export(quiet = false): Promise<void> {
-    // A request arriving mid-export would otherwise be dropped by this guard, leaving the
-    // output stale for that change; mark it and re-run once the in-flight export finishes.
-    if (this.exporting) { this.exportQueued = true; return; }
+    // Concurrency guard: a change arriving mid-export isn't lost — the export-on-save trigger
+    // re-arms itself while `exporting` is true (see onload), and manual invocations can just
+    // be retried by the user.
+    if (this.exporting) return;
     this.exporting = true;
     try {
-      do {
-        this.exportQueued = false;
-        const outputDir = expandTilde(this.settings.outputDir);
-        const summary = await runExport(this.app, {
-          outputDir,
-          pluginName: this.settings.pluginName,
-          fields: fieldsOf(this.settings),
-          assetsRoot: expandTilde(this.settings.assetsRoot),
-        });
+      const outputDir = expandTilde(this.settings.outputDir);
+      const summary = await runExport(this.app, {
+        outputDir,
+        pluginName: this.settings.pluginName,
+        fields: fieldsOf(this.settings),
+        assetsRoot: expandTilde(this.settings.assetsRoot),
+      });
 
-        const issue = (label: string, items: string[]) =>
-          items.length ? `\n${items.length} ${label}: ${items[0]}${items.length > 1 ? " …" : ""}` : "";
-        const err = issue("error(s)", summary.errors);
-        const warn = issue("warning(s)", summary.warnings);
+      const issue = (label: string, items: string[]) =>
+        items.length ? `\n${items.length} ${label}: ${items[0]}${items.length > 1 ? " …" : ""}` : "";
+      const err = issue("error(s)", summary.errors);
+      const warn = issue("warning(s)", summary.warnings);
 
-        new Notice(
-          `Vault Skills: exported ${summary.skills} skill(s) + ${summary.agents} agent(s)` +
-            (summary.removed ? `, removed ${summary.removed}` : "") +
-            err +
-            warn +
-            `\nRun /reload-plugins in Claude Code to load.`,
-          quiet ? 4000 : summary.errors.length ? 12000 : 8000,
-        );
-      } while (this.exportQueued);
+      new Notice(
+        `Vault Skills: exported ${summary.skills} skill(s) + ${summary.agents} agent(s)` +
+          (summary.removed ? `, removed ${summary.removed}` : "") +
+          err +
+          warn +
+          `\nRun /reload-plugins in Claude Code to load.`,
+        quiet ? 4000 : summary.errors.length ? 12000 : 8000,
+      );
     } catch (e) {
       new Notice(`Vault Skills: export failed — ${e instanceof Error ? e.message : String(e)}`, 10000);
     } finally {

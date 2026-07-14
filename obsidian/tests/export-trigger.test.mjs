@@ -45,6 +45,32 @@ test("cancel() drops a pending export (e.g. on plugin unload)", () => {
   }
 });
 
+test("a callback may re-arm the debounce from within itself (in-flight retry, bounded)", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let busy = true; // stand-in for an export still in flight
+    let runs = 0;
+    const trigger = debounce(() => {
+      if (busy) { trigger(); return; } // retry after another wait rather than dropping the event
+      runs++;
+    }, 750);
+
+    trigger();
+    mock.timers.tick(750);
+    assert.equal(runs, 0, "retried while busy, did not run");
+    mock.timers.tick(750);
+    assert.equal(runs, 0, "still busy, retried again — no runaway loop");
+
+    busy = false;
+    mock.timers.tick(750);
+    assert.equal(runs, 1, "runs exactly once when the in-flight condition clears");
+    mock.timers.tick(3000);
+    assert.equal(runs, 1, "no further runs after it settles");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test("only skill/agent/policy changes request an export", () => {
   const requested = [];
   const deps = (fm) => ({

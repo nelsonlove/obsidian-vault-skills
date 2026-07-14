@@ -21,7 +21,7 @@ export const DEFAULT_FIELDS: FieldConfig = { mode: "prefix", prefix: "", key: "v
  *  export" — shared by collection (collectNotes) and the export-on-save relevance check. */
 export const EXPORTABLE_TYPES = ["skill", "agent", "policy"] as const;
 export function isExportableType(type: unknown): type is (typeof EXPORTABLE_TYPES)[number] {
-  return type === "skill" || type === "agent" || type === "policy";
+  return (EXPORTABLE_TYPES as readonly unknown[]).includes(type);
 }
 
 export interface ExportOptions {
