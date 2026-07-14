@@ -9,7 +9,7 @@
 // the cache has settled and every cascaded link rewrite is done, so validation always runs
 // against the consistent post-rename tree.
 
-import { fieldView, isExportableType, type FieldConfig } from "./exporter.js";
+import { fieldView, detectKind, type DetectConfig } from "./exporter.js";
 
 /** A debounced trigger, plus a `cancel()` to drop a pending call (e.g. on plugin unload,
  *  so a queued export never fires against a torn-down plugin). */
@@ -42,8 +42,8 @@ export function debounce(fn: () => void, waitMs: number): Debounced {
 export interface ChangeTriggerDeps {
   /** Whether export-on-save is enabled. */
   isEnabled: () => boolean;
-  /** Current field-namespacing config. */
-  fields: () => FieldConfig;
+  /** Current detection + field-namespacing config. */
+  fields: () => DetectConfig;
   /** Frontmatter of the changed file, or undefined if it has none. */
   getFrontmatter: (file: unknown) => Record<string, unknown> | undefined;
   /** Request an export. Debounced upstream so a rename's burst collapses into one run. */
@@ -51,12 +51,15 @@ export interface ChangeTriggerDeps {
 }
 
 /** Handle a metadataCache "changed" event: request a (debounced) export only when the
- *  changed note is a skill/agent/policy — read through the configured field mode so a bare
- *  `type:` on an unrelated note doesn't false-positive. */
+ *  changed note is a skill/agent/policy — resolved through the configured detection mode
+ *  (`type:` field or kind tag), so a bare `type:` on an unrelated note doesn't false-positive
+ *  and an ambiguous multi-kind note doesn't trigger churn. */
 export function handleNoteChanged(file: unknown, deps: ChangeTriggerDeps): void {
   if (!deps.isEnabled()) return;
   const fm = deps.getFrontmatter(file);
   if (!fm) return;
-  const { view } = fieldView(fm, deps.fields());
-  if (isExportableType(view.type)) deps.requestExport();
+  const cfg = deps.fields();
+  const { view } = fieldView(fm, cfg);
+  const kind = detectKind(view, fm, cfg);
+  if (kind && kind !== "ambiguous") deps.requestExport();
 }

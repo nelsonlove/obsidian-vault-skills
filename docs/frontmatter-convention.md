@@ -3,9 +3,11 @@
 How to author skill/agent notes for `vault-skills`. This is the friendly guide; the exact
 rules and validation live in [`spec-frontmatter-tree.md`](spec-frontmatter-tree.md).
 
-A note becomes a skill or agent when its frontmatter has `type: skill | agent`. Its place
-in the hierarchy comes from a single **`parent`** wikilink — **not** from which folder it
-sits in. Put notes wherever you like; the tree lives in frontmatter.
+A note becomes a skill or agent when its frontmatter has `type: skill | agent` — or, if you
+switch the **Type source** setting to *tags*, when it carries the matching tag (see
+[Declaring the kind](#declaring-the-kind-type-field-vs-tags) below). Its place in the
+hierarchy comes from a single **`parent`** wikilink — **not** from which folder it sits in.
+Put notes wherever you like; the tree lives in frontmatter.
 
 ## Fields
 
@@ -54,6 +56,37 @@ the meanings and rules are identical:
   ```
   Cleanest, but a nested `parent` wikilink **may not** get backlinks/graph edges, and
   Obsidian's Properties UI won't edit nested objects. Prefer `prefix` if you navigate by link.
+
+## Declaring the kind: `type` field vs tags
+
+By default a note's **kind** (skill/agent/policy) comes from its `type` field. If you'd
+rather drive it from Obsidian **tags**, set **Type source → tags** in the plugin settings.
+Then a note is a skill/agent/policy when it carries the matching tag:
+
+| Kind | Default tag (`tagPrefix` = `agent/`) | Blank prefix |
+|---|---|---|
+| skill | `#agent/skill` | `#skill` |
+| agent | `#agent/agent` | `#agent` |
+| policy | `#agent/policy` | `#policy` |
+
+- The tag decides the **kind only**. `parent`, `description`, `name`, `tools`, … are still
+  read from frontmatter through the field mode above — tags can't express a `[[wikilink]]`
+  parent or a description.
+- Kind tags are read from the note's frontmatter `tags:` (or singular `tag:`; a list or a
+  string), matched **case-insensitively** — body/inline `#tags` are ignored, so a note that
+  merely mentions a kind tag in prose isn't classified. Set `tagPrefix` blank for bare
+  `#skill`/`#agent`/`#policy` — but mind that those bare tags then collide with any everyday use
+  of them, so a namespaced prefix (the `agent/` default) is safer.
+- The **Mark** command / `vault_skills_mark` tool swap the kind cleanly in tags mode: re-marking
+  a note strips any existing `#{prefix}{kind}` tag before adding the new one, so it never ends up
+  with two kind tags (which would read as ambiguous and be skipped).
+- In tags mode any `type:` field is **ignored**; in the default frontmatter mode tags are
+  ignored. It's one or the other, vault-wide.
+- A note carrying **two** different kind tags (e.g. `#agent/skill` *and* `#agent/agent`) is
+  skipped with a warning — tag it as exactly one.
+
+The **Mark note as skill / agent / policy** command (and the `vault_skills_mark` MCP tool)
+follow the mode: in tags mode they append the kind tag instead of writing `type:`.
 
 ## The three edges
 

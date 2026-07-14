@@ -13,7 +13,7 @@ your vault ─▶ obsidian/ (producer) ─writes─▶ ~/.claude/skills/vault-sk
 
 | Directory | What it is | Runtime |
 |---|---|---|
-| [`obsidian/`](obsidian) | The **Obsidian plugin** — the exporter (and an MCP server). Discovers `type: skill\|agent\|policy` notes via the metadata cache, builds/validates the tree, and writes the Claude Code plugin (generated content **plus** the bundled `new-skill` helper). | runs inside Obsidian |
+| [`obsidian/`](obsidian) | The **Obsidian plugin** — the exporter (and an MCP server). Discovers skill/agent/policy notes (by `type:` field, or by tag — e.g. `#agent/skill` — when Type source is set to tags) via the metadata cache, builds/validates the tree, and writes the Claude Code plugin (generated content **plus** the bundled `new-skill` helper). | runs inside Obsidian |
 | [`docs/`](docs) | The note convention and the build spec. | — |
 | [`claude-code/`](claude-code) | Reference scaffold (manifest + README). The live plugin is generated to `~/.claude/skills/vault-skills` by default, not here. | — |
 

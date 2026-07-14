@@ -1,6 +1,6 @@
 import { App, FuzzySuggestModal, Modal, Notice, Setting } from "obsidian";
 import type VaultSkillsPlugin from "./main.js";
-import { analyzeVault, collectNotes, markFrontmatter, readPluginVersion, runExport, type MarkInput } from "./exporter.js";
+import { analyzeVault, applyMark, collectNotes, markFrontmatter, readPluginVersion, runExport, type MarkInput } from "./exporter.js";
 import { fieldsOf } from "./settings.js";
 import { expandTilde } from "./paths.js";
 
@@ -97,8 +97,8 @@ export async function cmdMark(plugin: VaultSkillsPlugin): Promise<void> {
   if (choice === undefined) return;
   const parent = choice === NONE ? undefined : choice;
 
-  const patch = markFrontmatter({ type, parent } as MarkInput, fields);
-  await plugin.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => { Object.assign(fm, patch); });
+  const result = markFrontmatter({ type, parent } as MarkInput, fields);
+  await plugin.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => { applyMark(fm, result); });
   new Notice(`Vault Skills: marked "${file.basename}" as ${type}${parent ? ` · parent ${parent}` : ""}. Re-export to publish.`);
 }
 
