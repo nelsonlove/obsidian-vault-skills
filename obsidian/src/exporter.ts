@@ -15,13 +15,71 @@ export interface FieldConfig {
   key: string;    // e.g. "vault-skills" → nested object (nested mode)
 }
 
+/** FieldConfig plus how a note's *kind* (skill/agent/policy) is declared. In "tags" mode the
+ *  kind comes from a `#{tagPrefix}{kind}` tag and any `type:` frontmatter is ignored; every other
+ *  field (parent, description, …) is still read from frontmatter per the FieldConfig. Both extras
+ *  are optional so a bare FieldConfig behaves exactly like frontmatter mode with the default prefix. */
+export interface DetectConfig extends FieldConfig {
+  typeSource?: "frontmatter" | "tags";
+  tagPrefix?: string; // e.g. "agent/" → #agent/skill, #agent/agent, #agent/policy
+}
+
 export const DEFAULT_FIELDS: FieldConfig = { mode: "prefix", prefix: "", key: "vault-skills" };
+export const DEFAULT_TAG_PREFIX = "agent/";
+
+/** The note `type` values that produce plugin output (skills, agents, and the policies
+ *  folded into agents). Single source of truth for "does this note participate in the
+ *  export" — shared by collection (collectNotes), kind detection, and the export-on-save
+ *  relevance check. */
+export const EXPORTABLE_TYPES = ["skill", "agent", "policy"] as const;
+type Kind3 = (typeof EXPORTABLE_TYPES)[number];
+export function isExportableType(type: unknown): type is Kind3 {
+  return (EXPORTABLE_TYPES as readonly unknown[]).includes(type);
+}
+
+/** Normalize a note's frontmatter `tags` (Obsidian stores them without `#`, as a list or a
+ *  string) into `#tag` strings. Body/inline tags are intentionally NOT read: a kind declaration
+ *  is metadata, so it lives in frontmatter — this avoids classifying a note that merely mentions
+ *  `#agent/skill` in prose, and matches the "tags only in frontmatter" vault convention. Pure. */
+export function extractTags(fm: Record<string, unknown> | null | undefined): string[] {
+  const out: string[] = [];
+  const push = (v: unknown): void => {
+    if (v == null) return; // skip null/empty list entries rather than emitting `#null`
+    const s = String(v).trim();
+    if (s) out.push(s.startsWith("#") ? s : `#${s}`);
+  };
+  // Obsidian accepts both the plural `tags:` and singular `tag:` frontmatter keys.
+  for (const raw of [fm?.tags, fm?.tag]) {
+    if (Array.isArray(raw)) for (const t of raw) push(t);
+    else if (typeof raw === "string") for (const t of raw.split(/[,\s]+/)) push(t);
+  }
+  return out;
+}
+
+/** Which kind a set of tags declares under `prefix` (case-insensitive, exact leaf), or null;
+ *  "ambiguous" when more than one distinct kind tag is present. */
+export function tagKind(tags: string[], prefix: string): Kind3 | null | "ambiguous" {
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  const hits = EXPORTABLE_TYPES.filter((k) => have.has(`#${prefix}${k}`.toLowerCase()));
+  return hits.length === 0 ? null : hits.length > 1 ? "ambiguous" : hits[0];
+}
+
+/** Resolve a note's kind per the detection mode. `view` is the field-mode frontmatter view;
+ *  `fm` is the raw note frontmatter (for tags mode). */
+export function detectKind(
+  view: Record<string, unknown>,
+  fm: Record<string, unknown> | null | undefined,
+  cfg: DetectConfig,
+): Kind3 | null | "ambiguous" {
+  if ((cfg.typeSource ?? "frontmatter") === "tags") return tagKind(extractTags(fm), cfg.tagPrefix ?? DEFAULT_TAG_PREFIX);
+  return isExportableType(view.type) ? view.type : null;
+}
 
 export interface ExportOptions {
   outputDir: string;
   pluginName: string;
   pluginDescription?: string;
-  fields?: FieldConfig;
+  fields?: DetectConfig;
   /** Root of a parallel filesystem tree holding skills' supporting files (see assets.ts).
    *  Empty/unset ⇒ no supporting files are bundled. */
   assetsRoot?: string;
@@ -87,26 +145,34 @@ function embedLookup(app: App): EmbedLookup {
   };
 }
 
-/** Collect every note whose (namespaced) frontmatter marks it a skill/agent/policy.
- *  When `embedWarnings` is given, `![[X]]` transclusions in note bodies are resolved
- *  (inlined) and any resolution problems are appended to it; without it, bodies keep
- *  raw embed syntax (cheap mode for callers that only need the note list). */
-export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELDS, embedWarnings?: string[]): Promise<NoteInput[]> {
+/** Collect every note marked a skill/agent/policy — by its `type:` field (frontmatter mode) or a
+ *  `#{tagPrefix}{kind}` tag (tags mode). Ambiguous tag notes are skipped, reported via `warnings`.
+ *  When `warnings` is given, `![[X]]` transclusions in note bodies are also resolved (inlined),
+ *  resolution problems reported through the same sink; without it, bodies keep raw embed syntax
+ *  (cheap mode for callers that only need the note list). */
+export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIELDS, warnings?: string[]): Promise<NoteInput[]> {
   const notes: NoteInput[] = [];
-  const resolve = embedWarnings
-    ? (body: string, from: string) => resolveTransclusions(body, from, embedLookup(app), embedWarnings)
+  const resolve = warnings
+    ? (body: string, from: string) => resolveTransclusions(body, from, embedLookup(app), warnings)
     : null;
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-    if (!fm) continue;
+    if (!fm) continue; // both modes key off frontmatter (type: field, or the note's tags: list)
     const { view, parent } = fieldView(fm, fields);
-    if (view.type !== "skill" && view.type !== "agent" && view.type !== "policy") continue;
+    const kind = detectKind(view, fm, fields);
+    if (kind === "ambiguous") {
+      warnings?.push(`${file.path}: multiple vault-skills kind tags — skipped (tag it as exactly one of skill/agent/policy)`);
+      continue;
+    }
+    if (!kind) continue;
     const raw = await app.vault.cachedRead(file);
     let body = stripFrontmatter(raw);
     if (resolve) body = await resolve(body, file.path);
     notes.push({
+      // Copy the view (never mutate: in nested mode `view` is Obsidian's live cache object) and
+      // normalize the kind into `type` so the transform + policy count read one source of truth.
+      frontmatter: { ...view, type: kind },
       path: file.path,
-      frontmatter: view,
       body,
       parentPaths: resolveParents(app, file.path, parent),
     });
@@ -115,13 +181,13 @@ export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELD
 }
 
 export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
-  const embedWarnings: string[] = [];
-  const notes = await collectNotes(app, opts.fields ?? DEFAULT_FIELDS, embedWarnings);
+  const collectWarnings: string[] = [];
+  const notes = await collectNotes(app, opts.fields ?? DEFAULT_FIELDS, collectWarnings);
   // FileSystemAdapter exposes getBasePath(); duck-type it to keep `obsidian` type-only.
   const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
   const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
-  warnings.unshift(...embedWarnings);
+  warnings.unshift(...collectWarnings);
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription, opts.version);
 
@@ -218,15 +284,14 @@ export interface Analysis {
 }
 
 /** Shared read-only core for `validate` and `tree`: collect + transform, no write. */
-export async function analyzeVault(app: App, fields: FieldConfig = DEFAULT_FIELDS, pluginName = "vault-skills"): Promise<Analysis> {
-  const embedWarnings: string[] = [];
-  const notes = await collectNotes(app, fields, embedWarnings);
+export async function analyzeVault(app: App, fields: DetectConfig = DEFAULT_FIELDS, pluginName = "vault-skills"): Promise<Analysis> {
+  const collectWarnings: string[] = [];
+  const notes = await collectNotes(app, fields, collectWarnings);
   const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
   const { tree, warnings, errors } = transformAll(notes, { pluginName, synthesizeRoot: true, vaultPath });
-  warnings.unshift(...embedWarnings);
   return {
-    tree, errors, warnings,
+    tree, errors, warnings: [...collectWarnings, ...warnings],
     counts: {
       agents: tree.filter((n) => n.kind === "agent").length,
       skills: tree.filter((n) => n.kind === "skill").length,
@@ -242,17 +307,72 @@ export interface MarkInput {
   root?: boolean;
 }
 
-/** Pure: the frontmatter keys to set on a note to mark it, honoring the field mode. */
-export function markFrontmatter(input: MarkInput, fields: FieldConfig = DEFAULT_FIELDS): Record<string, unknown> {
-  const flat: Record<string, unknown> = { type: input.type };
+export interface MarkResult {
+  /** Frontmatter keys to Object.assign onto the note (already namespaced per field mode). */
+  set: Record<string, unknown>;
+  /** Kind tags (with a leading `#`) to append to the note's `tags` — non-empty only in tags mode. */
+  addTags: string[];
+  /** Kind tags (with a leading `#`) to strip from `tags` before appending — the whole
+   *  `#{prefix}{kind}` family, so re-marking replaces the kind rather than adding a second one. */
+  removeTags: string[];
+}
+
+/** Pure: how to mark a note as a given kind, honoring the field mode and detection mode. In tags
+ *  mode the kind becomes a tag (`addTags`) instead of a `type:` field; parent/description/root
+ *  stay frontmatter fields in both modes. Apply with {@link applyMark}. */
+export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT_FIELDS): MarkResult {
+  const tagsMode = (fields.typeSource ?? "frontmatter") === "tags";
+  const addTags: string[] = [];
+  const removeTags: string[] = [];
+  const flat: Record<string, unknown> = {};
+  if (tagsMode) {
+    const prefix = fields.tagPrefix ?? DEFAULT_TAG_PREFIX;
+    addTags.push(`#${prefix}${input.type}`);
+    // strip every sibling kind tag first, so re-marking swaps the kind (not two → "ambiguous")
+    for (const k of EXPORTABLE_TYPES) removeTags.push(`#${prefix}${k}`);
+  } else flat.type = input.type;
   if (input.root) flat.root = true;
   if (input.parent) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
   if (input.description) flat.description = input.description;
-  if (fields.mode === "nested") return { [fields.key]: flat };
-  // prefix mode — a blank prefix yields bare top-level fields
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(flat)) out[fields.prefix + k] = v;
-  return out;
+
+  let set: Record<string, unknown>;
+  if (fields.mode === "nested") set = Object.keys(flat).length ? { [fields.key]: flat } : {};
+  else {
+    // prefix mode — a blank prefix yields bare top-level fields
+    set = {};
+    for (const [k, v] of Object.entries(flat)) set[fields.prefix + k] = v;
+  }
+  return { set, addTags, removeTags };
+}
+
+/** Apply a {@link markFrontmatter} result to a note's frontmatter object in place: assign the
+ *  fields, then reconcile `tags` — strip the kind-tag family, then dedup-append the new kind tag
+ *  (stored bare, without `#`, as Obsidian does). A scalar/string `tags` value is split the same
+ *  way {@link extractTags} reads it, so pre-existing tags survive as distinct entries. */
+export function applyMark(fm: Record<string, unknown>, result: MarkResult): void {
+  Object.assign(fm, result.set);
+  const addTags = result.addTags ?? [];
+  const removeTags = result.removeTags ?? [];
+  if (!addTags.length && !removeTags.length) return;
+
+  const raw = fm.tags;
+  let existing: string[] =
+    Array.isArray(raw) ? raw.map(String)
+    : typeof raw === "string" ? raw.split(/[,\s]+/).filter(Boolean)
+    : raw == null ? [] : [String(raw)];
+  const bare = (t: string): string => t.replace(/^#/, "").toLowerCase();
+
+  const remove = new Set(removeTags.map(bare));
+  existing = existing.filter((t) => !remove.has(bare(t)));
+  const have = new Set(existing.map(bare));
+  for (const tag of addTags) {
+    const b = tag.replace(/^#/, "");
+    if (!have.has(b.toLowerCase())) {
+      existing.push(b);
+      have.add(b.toLowerCase());
+    }
+  }
+  fm.tags = existing;
 }
 
 /** Make sure the output dir is a valid Claude Code plugin (create manifest if absent).

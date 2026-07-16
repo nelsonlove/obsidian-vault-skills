@@ -1,10 +1,13 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type VaultSkillsPlugin from "./main.js";
+import type { DetectConfig } from "./exporter.js";
 
 export interface VaultSkillsSettings {
   outputDir: string;
   pluginName: string;
   exportOnSave: boolean;
+  typeSource: "frontmatter" | "tags";
+  tagPrefix: string;
   fieldMode: "prefix" | "nested";
   fieldPrefix: string;
   fieldKey: string;
@@ -12,10 +15,19 @@ export interface VaultSkillsSettings {
   releaseDir: string;
 }
 
+/** The detection + field-namespacing config derived from settings — the single mapping shared by
+ *  the export, the read-only commands, the mark write-path, and the export-on-save relevance check.
+ *  Returns a DetectConfig (a superset of FieldConfig), so field-only consumers work unchanged. */
+export function fieldsOf(s: VaultSkillsSettings): DetectConfig {
+  return { mode: s.fieldMode, prefix: s.fieldPrefix, key: s.fieldKey, typeSource: s.typeSource, tagPrefix: s.tagPrefix };
+}
+
 export const DEFAULT_SETTINGS: VaultSkillsSettings = {
   outputDir: "~/.claude/skills/vault-skills",
   pluginName: "vault-skills",
   exportOnSave: false,
+  typeSource: "frontmatter", // read the kind from the `type` field (default; back-compatible)
+  tagPrefix: "agent/", // tags mode: #agent/skill, #agent/agent, #agent/policy
   fieldMode: "prefix",
   fieldPrefix: "", // blank prefix = bare top-level fields (type, parent, …)
   fieldKey: "vault-skills",
@@ -81,6 +93,32 @@ export class VaultSkillsSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
+
+    new Setting(containerEl)
+      .setName("Type source")
+      .setDesc("How a note declares its kind (skill / agent / policy). 'frontmatter type' reads the type field; 'tags' reads a tag instead. Either way, parent/description and the other fields stay in frontmatter.")
+      .addDropdown((d) =>
+        d.addOptions({ frontmatter: "frontmatter type", tags: "tags" })
+          .setValue(this.plugin.settings.typeSource)
+          .onChange(async (v) => {
+            this.plugin.settings.typeSource = v as "frontmatter" | "tags";
+            await this.plugin.saveSettings();
+            this.display(); // re-render so the Tag prefix field shows/hides
+          }),
+      );
+
+    if (this.plugin.settings.typeSource === "tags") {
+      const p = this.plugin.settings.tagPrefix;
+      new Setting(containerEl)
+        .setName("Tag prefix")
+        .setDesc(`Kind tags are #${p}skill, #${p}agent, #${p}policy (read from frontmatter tags, case-insensitive). Leave blank for bare #skill / #agent / #policy — but those collide with everyday tags, so a namespaced prefix is safer.`)
+        .addText((t) =>
+          t.setValue(this.plugin.settings.tagPrefix).onChange(async (v) => {
+            this.plugin.settings.tagPrefix = v.trim();
+            await this.plugin.saveSettings();
+          }),
+        );
+    }
 
     new Setting(containerEl)
       .setName("Frontmatter field mode")
