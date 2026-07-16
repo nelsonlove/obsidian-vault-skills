@@ -279,3 +279,13 @@ test("command name colliding with a skill is renamed and warned (shared /plugin:
   assert.ok(find(generated, "commands/sweep-2.md"), "command is renamed to avoid the collision");
   assert.ok(warnings.some((w) => /command name `sweep` collides/.test(w)));
 });
+
+test("command whose name slugs to empty errors, emits no commands/.md, no empty-name warning", () => {
+  const { generated, errors, warnings } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("c.md", { type: "command", name: "！！！" }, [], "body"),
+  ], OPTS);
+  assert.equal(generated.some((g) => g.relOut.startsWith("commands/")), false, "no broken command file");
+  assert.ok(errors.some((e) => /empty name/.test(e)), "empty name is a reported error");
+  assert.equal(warnings.some((w) => /command name `` collides/.test(w)), false, "no empty-backtick warning");
+});

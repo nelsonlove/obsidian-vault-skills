@@ -299,6 +299,9 @@ export interface MarkInput {
 export interface MarkResult {
   /** Frontmatter keys to Object.assign onto the note (already namespaced per field mode). */
   set: Record<string, unknown>;
+  /** Frontmatter keys to delete (already namespaced) — e.g. the tree-only fields when demoting a
+   *  note to a flat command, so a stale `parent`/`root`/… doesn't linger as misleading metadata. */
+  unset: string[];
   /** Kind tags (with a leading `#`) to append to the note's `tags` — non-empty only in tags mode. */
   addTags: string[];
   /** Kind tags (with a leading `#`) to strip from `tags` before appending — the whole
@@ -320,18 +323,25 @@ export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT
     // strip every sibling kind tag first, so re-marking swaps the kind (not two → "ambiguous")
     for (const k of EXPORTABLE_TYPES) removeTags.push(`#${prefix}${k}`);
   } else flat.type = input.type;
+  const isCommand = input.type === "command";
   if (input.root) flat.root = true;
-  if (input.parent) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
+  // Commands are flat — a parent is meaningless, so never write one (and clear a stale one below).
+  if (input.parent && !isCommand) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
   if (input.description) flat.description = input.description;
 
   let set: Record<string, unknown>;
-  if (fields.mode === "nested") set = Object.keys(flat).length ? { [fields.key]: flat } : {};
-  else {
-    // prefix mode — a blank prefix yields bare top-level fields
+  const unset: string[] = [];
+  if (fields.mode === "nested") {
+    // Nested mode replaces the whole object, so stale sub-fields drop on their own.
+    set = Object.keys(flat).length ? { [fields.key]: flat } : {};
+  } else {
+    // prefix mode — a blank prefix yields bare top-level fields. Individual keys are set in place,
+    // so demoting to a command must explicitly clear the tree-only fields it leaves behind.
     set = {};
     for (const [k, v] of Object.entries(flat)) set[fields.prefix + k] = v;
+    if (isCommand) for (const k of ["parent", "root", "crosscutting", "slot"]) unset.push(fields.prefix + k);
   }
-  return { set, addTags, removeTags };
+  return { set, unset, addTags, removeTags };
 }
 
 /** Apply a {@link markFrontmatter} result to a note's frontmatter object in place: assign the
@@ -340,6 +350,7 @@ export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT
  *  way {@link extractTags} reads it, so pre-existing tags survive as distinct entries. */
 export function applyMark(fm: Record<string, unknown>, result: MarkResult): void {
   Object.assign(fm, result.set);
+  for (const k of result.unset ?? []) delete fm[k];
   const addTags = result.addTags ?? [];
   const removeTags = result.removeTags ?? [];
   if (!addTags.length && !removeTags.length) return;

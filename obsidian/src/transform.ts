@@ -140,6 +140,23 @@ function passthrough(
   return extra;
 }
 
+/** Description fallback shared by skills/agents and commands: the note's `description`, else the
+ *  name humanized (dashes → spaces). `nameBase` is the already-slugged name, so this reuses it
+ *  rather than re-slugging. */
+function descFallback(fm: Record<string, unknown>, nameBase: string): string {
+  return (str(fm.description) || nameBase.replace(/-/g, " ")).trim();
+}
+
+/** Uniquify `base` against `used` (mutated), appending `-2`, `-3`, … on collision. Shared by the
+ *  tree-node and command naming passes so both dedup the same `/plugin:<name>` namespace identically. */
+function uniqueName(base: string, used: Set<string>): { name: string; collided: boolean } {
+  const collided = used.has(base);
+  let name = base, k = 2;
+  while (used.has(name)) name = `${base}-${k++}`;
+  used.add(name);
+  return { name, collided };
+}
+
 function toolsArray(v: unknown): string[] | undefined {
   if (Array.isArray(v)) return v.map(String);
   if (typeof v === "string" && v.trim()) return v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -201,11 +218,11 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     if (fm.type === "command") {
       // Flat: commands take no part in the tree — no parent, no ownership. `name` (or the
       // filename) becomes the slash-command name; the body is the prompt template.
-      const fileBase = fileBaseOf(note.path);
+      const nameBase = slug(str(fm.name) || fileBaseOf(note.path));
       commands.push({
         path: note.path,
-        nameBase: slug(str(fm.name) || fileBase),
-        rawDesc: String(str(fm.description) || slug(str(fm.name) || fileBase).replace(/-/g, " ")).trim(),
+        nameBase,
+        rawDesc: descFallback(fm, nameBase),
         extra: passthrough(fm, COMMAND_PASSTHROUGH_FIELDS, note.path, warnings),
         body: note.body.trim(),
         genName: "",
@@ -216,15 +233,16 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     if (!kind) continue;
     const fileBase = fileBaseOf(note.path);
     const extra = kind === "skill" ? passthrough(fm, SKILL_PASSTHROUGH_FIELDS, note.path, warnings) : {};
+    const nameBase = slug(str(fm.name) || fileBase);
     nodes.push({
       kind,
       path: note.path,
       isRoot: fm.root === true,
       parentPaths: note.parentPaths ?? [],
-      nameBase: slug(str(fm.name) || fileBase),
+      nameBase,
       id: str(fm.id),
       label: str(fm.label) || str(fm.name) || fileBase,
-      rawDesc: String(str(fm.description) || slug(str(fm.name) || fileBase).replace(/-/g, " ")).trim(),
+      rawDesc: descFallback(fm, nameBase),
       version: str(fm.version),
       tools: toolsArray(fm.tools),
       model: str(fm.model),
@@ -325,19 +343,14 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
   for (const n of nodes) {
     if (!n.valid) continue;
     const base = n.id ? `${n.id}-${n.nameBase}` : n.nameBase;
-    let name = base; let k = 2;
-    while (used.has(name)) name = `${base}-${k++}`;
-    used.add(name);
-    n.genName = name;
+    n.genName = uniqueName(base, used).name;
   }
   // Commands share the /plugin:<name> namespace with skills, so dedup against the same set —
   // a command and a skill both named `foo` would otherwise both claim `/plugin:foo`.
   for (const c of commands) {
-    let name = c.nameBase; let k = 2;
-    const collides = used.has(name);
-    while (used.has(name)) name = `${c.nameBase}-${k++}`;
-    if (collides) warnings.push(`${c.path}: command name \`${c.nameBase}\` collides with another command/skill/agent — renamed to \`${name}\``);
-    used.add(name);
+    if (!c.nameBase) { errors.push(`${c.path}: command has an empty name — set a \`name:\` or give the note a filename with alphanumerics`); continue; }
+    const { name, collided } = uniqueName(c.nameBase, used);
+    if (collided) warnings.push(`${c.path}: command name \`${c.nameBase}\` collides with an existing skill/agent/command — renamed to \`${name}\``);
     c.genName = name;
   }
 
@@ -407,6 +420,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
 
   // ---- commands (flat): emit a Claude Code slash command per note ----
   for (const c of commands) {
+    if (!c.genName) continue; // empty-name command errored above, nothing to emit
     // No name/breadcrumb in the frontmatter: the slash-command name is the filename, and a
     // command has no scope in the tree. Body is the prompt template ($ARGUMENTS, !bash, @file).
     const fmOut = toYaml({ description: c.rawDesc, ...c.extra });

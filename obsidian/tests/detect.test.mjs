@@ -67,17 +67,28 @@ test("collectNotes in tags mode skips ambiguous notes with a warning", async () 
   assert.ok(warnings.some((w) => /multiple vault-skills kind tags/.test(w)));
 });
 
-test("markFrontmatter returns { set, addTags, removeTags }: frontmatter writes type, tags swaps the kind tag", () => {
+test("markFrontmatter returns { set, unset, addTags, removeTags }: frontmatter writes type, tags swaps the kind tag", () => {
   // frontmatter mode — unchanged behavior, no tag churn
   assert.deepEqual(
     markFrontmatter({ type: "agent", parent: "research" }, { mode: "prefix", prefix: "", key: "vault-skills" }),
-    { set: { type: "agent", parent: "[[research]]" }, addTags: [], removeTags: [] },
+    { set: { type: "agent", parent: "[[research]]" }, unset: [], addTags: [], removeTags: [] },
   );
   // tags mode — kind becomes a tag; the whole kind family is marked for removal so re-marking swaps
   assert.deepEqual(
     markFrontmatter({ type: "skill", parent: "research" }, { mode: "prefix", prefix: "", key: "", typeSource: "tags", tagPrefix: "agent/" }),
-    { set: { parent: "[[research]]" }, addTags: ["#agent/skill"], removeTags: ["#agent/skill", "#agent/agent", "#agent/policy", "#agent/command"] },
+    { set: { parent: "[[research]]" }, unset: [], addTags: ["#agent/skill"], removeTags: ["#agent/skill", "#agent/agent", "#agent/policy", "#agent/command"] },
   );
+});
+
+test("markFrontmatter: command is flat — never writes a parent and clears stale tree fields", () => {
+  const r = markFrontmatter({ type: "command", parent: "research" }, { mode: "prefix", prefix: "", key: "vault-skills" });
+  assert.deepEqual(r.set, { type: "command" });          // parent ignored
+  assert.deepEqual(r.unset, ["parent", "root", "crosscutting", "slot"]);
+  // applying over a note that was a parented skill strips the stale parent
+  const fm = { type: "skill", parent: "[[research]]", description: "x" };
+  applyMark(fm, r);
+  assert.equal(fm.type, "command");
+  assert.equal("parent" in fm, false);
 });
 
 test("applyMark assigns set fields and dedup-appends bare tags into fm.tags", () => {
