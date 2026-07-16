@@ -26,13 +26,13 @@ export interface DetectConfig extends FieldConfig {
 export const DEFAULT_FIELDS: FieldConfig = { mode: "prefix", prefix: "", key: "vault-skills" };
 export const DEFAULT_TAG_PREFIX = "agent/";
 
-/** The note `type` values that produce plugin output (skills, agents, and the policies
- *  folded into agents). Single source of truth for "does this note participate in the
- *  export" — shared by collection (collectNotes), kind detection, and the export-on-save
+/** The note `type` values that produce plugin output (skills, agents, the policies folded into
+ *  agents, and the flat slash commands). Single source of truth for "does this note participate
+ *  in the export" — shared by collection (collectNotes), kind detection, and the export-on-save
  *  relevance check. */
-export const EXPORTABLE_TYPES = ["skill", "agent", "policy"] as const;
-type Kind3 = (typeof EXPORTABLE_TYPES)[number];
-export function isExportableType(type: unknown): type is Kind3 {
+export const EXPORTABLE_TYPES = ["skill", "agent", "policy", "command"] as const;
+type ExportableKind = (typeof EXPORTABLE_TYPES)[number];
+export function isExportableType(type: unknown): type is ExportableKind {
   return (EXPORTABLE_TYPES as readonly unknown[]).includes(type);
 }
 
@@ -57,7 +57,7 @@ export function extractTags(fm: Record<string, unknown> | null | undefined): str
 
 /** Which kind a set of tags declares under `prefix` (case-insensitive, exact leaf), or null;
  *  "ambiguous" when more than one distinct kind tag is present. */
-export function tagKind(tags: string[], prefix: string): Kind3 | null | "ambiguous" {
+export function tagKind(tags: string[], prefix: string): ExportableKind | null | "ambiguous" {
   const have = new Set(tags.map((t) => t.toLowerCase()));
   const hits = EXPORTABLE_TYPES.filter((k) => have.has(`#${prefix}${k}`.toLowerCase()));
   return hits.length === 0 ? null : hits.length > 1 ? "ambiguous" : hits[0];
@@ -69,7 +69,7 @@ export function detectKind(
   view: Record<string, unknown>,
   fm: Record<string, unknown> | null | undefined,
   cfg: DetectConfig,
-): Kind3 | null | "ambiguous" {
+): ExportableKind | null | "ambiguous" {
   if ((cfg.typeSource ?? "frontmatter") === "tags") return tagKind(extractTags(fm), cfg.tagPrefix ?? DEFAULT_TAG_PREFIX);
   return isExportableType(view.type) ? view.type : null;
 }
@@ -92,6 +92,7 @@ export interface ExportOptions {
 export interface ExportSummary {
   skills: number;
   agents: number;
+  commands: number;
   assets: number;
   removed: number;
   warnings: string[];
@@ -254,6 +255,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   return {
     skills: files.filter((g) => g.kind === "skill").length,
     agents: files.filter((g) => g.kind === "agent").length,
+    commands: files.filter((g) => g.kind === "command").length,
     assets: assetCopies.length,
     removed: toRemove.length,
     warnings,
@@ -266,7 +268,7 @@ export interface Analysis {
   tree: TreeNode[];
   errors: string[];
   warnings: string[];
-  counts: { skills: number; agents: number; policies: number };
+  counts: { skills: number; agents: number; policies: number; commands: number };
 }
 
 /** Shared read-only core for `validate` and `tree`: collect + transform, no write. */
@@ -282,12 +284,13 @@ export async function analyzeVault(app: App, fields: DetectConfig = DEFAULT_FIEL
       agents: tree.filter((n) => n.kind === "agent").length,
       skills: tree.filter((n) => n.kind === "skill").length,
       policies: notes.filter((n) => n.frontmatter.type === "policy").length,
+      commands: notes.filter((n) => n.frontmatter.type === "command").length,
     },
   };
 }
 
 export interface MarkInput {
-  type: "skill" | "agent" | "policy";
+  type: "skill" | "agent" | "policy" | "command";
   parent?: string;      // agent basename or [[wikilink]]; empty ⇒ root
   description?: string;
   root?: boolean;

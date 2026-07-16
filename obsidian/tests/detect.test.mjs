@@ -76,7 +76,7 @@ test("markFrontmatter returns { set, addTags, removeTags }: frontmatter writes t
   // tags mode — kind becomes a tag; the whole kind family is marked for removal so re-marking swaps
   assert.deepEqual(
     markFrontmatter({ type: "skill", parent: "research" }, { mode: "prefix", prefix: "", key: "", typeSource: "tags", tagPrefix: "agent/" }),
-    { set: { parent: "[[research]]" }, addTags: ["#agent/skill"], removeTags: ["#agent/skill", "#agent/agent", "#agent/policy"] },
+    { set: { parent: "[[research]]" }, addTags: ["#agent/skill"], removeTags: ["#agent/skill", "#agent/agent", "#agent/policy", "#agent/command"] },
   );
 });
 

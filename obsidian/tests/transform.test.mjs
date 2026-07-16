@@ -234,3 +234,48 @@ test("toYaml: comma inside an array item forces block style with quoting", () =>
   const y = toYaml({ "allowed-tools": ["Bash(ls, cat)", "Read"] });
   assert.match(y, /allowed-tools:\n\s+- "Bash\(ls, cat\)"\n\s+- Read/);
 });
+
+test("command note emits commands/<name>.md — flat, no parent needed, body is the template", () => {
+  const { generated, errors } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("ps.md", { type: "command", name: "plugin-status", description: "Open the dashboard" }, [],
+      "Show me @[[03.32 Plugin status]] for $ARGUMENTS"),
+  ], OPTS);
+  assert.equal(errors.length, 0);
+  const cmd = find(generated, "commands/plugin-status.md");
+  assert.ok(cmd, "command file emitted");
+  assert.equal(cmd.kind, "command");
+  assert.match(cmd.content, /description: Open the dashboard/);
+  assert.match(cmd.content, /Show me @\[\[03\.32 Plugin status\]\] for \$ARGUMENTS/);
+  // flat: no tree frontmatter (no name/tools/skills), and the root doesn't own it
+  assert.doesNotMatch(cmd.content, /^name:/m);
+  assert.doesNotMatch(cmd.content, /skills:|tools:/);
+  assert.doesNotMatch(find(generated, "agents/vault.md").content, /plugin-status/);
+});
+
+test("command passthrough: argument-hint / allowed-tools / model emitted; housekeeping dropped", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("c.md", {
+      type: "command", name: "audit-plugin", description: "Audit one plugin",
+      "argument-hint": "[name]", "allowed-tools": ["Bash", "Read"], model: "sonnet",
+      tags: ["agent/command"], aliases: ["x"],
+    }, [], "Audit $1"),
+  ], OPTS);
+  const cmd = find(generated, "commands/audit-plugin.md");
+  assert.match(cmd.content, /argument-hint: "\[name\]"/);
+  assert.match(cmd.content, /allowed-tools: \[Bash, Read\]/);
+  assert.match(cmd.content, /model: sonnet/);
+  assert.doesNotMatch(cmd.content, /tags:|aliases:/);
+});
+
+test("command name colliding with a skill is renamed and warned (shared /plugin:name namespace)", () => {
+  const { generated, warnings } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("s.md", { type: "skill", name: "sweep" }, []),
+    note("c.md", { type: "command", name: "sweep" }, [], "do the sweep"),
+  ], OPTS);
+  assert.ok(find(generated, "skills/sweep/SKILL.md"), "skill keeps the base name");
+  assert.ok(find(generated, "commands/sweep-2.md"), "command is renamed to avoid the collision");
+  assert.ok(warnings.some((w) => /command name `sweep` collides/.test(w)));
+});
