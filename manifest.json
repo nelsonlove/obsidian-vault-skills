@@ -1,7 +1,7 @@
 {
   "id": "vault-skills",
   "name": "Vault Skills",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "minAppVersion": "1.6.6",
   "description": "Export a hierarchy of skills and agents authored in this Obsidian (Johnny Decimal) vault as native Claude Code skills/agents.",
   "author": "Nelson Love",
