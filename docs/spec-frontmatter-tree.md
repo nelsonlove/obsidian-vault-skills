@@ -82,6 +82,23 @@ Errors skip the node and warn; warnings advise.
 - **Synthesized root**: name `vault`, generic router body, owns level-0 skills, delegates
   to level-1 agents.
 
+### Transclusion resolution
+
+Compiled artifacts leave the vault, so Obsidian embed syntax in a skill/agent/policy
+body is resolved (inlined) at collection time:
+
+- `![[X]]` → the body of `X.md`, frontmatter stripped; `![[X#Heading]]` → that heading's
+  section (heading line included, up to the next same-or-higher-level heading; a nested
+  `X#H1#H2` path targets the last segment); `![[X#^block]]` → the anchored paragraph,
+  marker stripped. `|alias` suffixes are display-only and dropped.
+- Resolution is recursive (embeds inside embedded content, resolved relative to the
+  *embedded* note's path), with cycle detection and a depth cap of 5.
+- Left untouched: attachment embeds (non-`.md` targets), embeds inside fenced code
+  blocks or inline code spans (documentation *about* embeds), and anything that fails
+  to resolve (missing target/section, cycle, depth) — failures surface as warnings in
+  export/validate output, never errors.
+- Plain `[[wikilinks]]` are not touched — only `![[embeds]]` are content references.
+
 ### Supporting files (assets)
 
 When the *Supporting-files tree* setting (`assetsRoot`) is set, each skill note at
