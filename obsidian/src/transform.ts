@@ -369,6 +369,8 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       }
       if (entries.length) {
         bodyOut += `\n\n## Scope policies\n\nScoped policies bind any agent working on that scope's content, including you — your dispatch brief names the scope. Before working in a scope listed below, read its policy notes (and those of the scopes above it in its breadcrumb):\n${entries.join("\n")}`;
+        // Dedup is defensive: strict single-parent means a policy lands on exactly one
+        // index line today; this guards a future relaxation to shared policies.
         const seen = new Set<string>();
         const blocks = hardInline
           .filter((h) => !seen.has(h.pol.path) && seen.add(h.pol.path))
