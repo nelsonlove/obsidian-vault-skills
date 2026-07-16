@@ -108,6 +108,14 @@ test("embeds in fenced code blocks and inline code spans are documentation — s
   assert.equal(warnings.length, 0);
 });
 
+test("a ``` line inside a ```` fence is content, not a close (fence lengths respected)", async () => {
+  const warnings = [];
+  const body = "````md\n![[X]]\n```\n![[Y]]\n````\n\n![[Real]]";
+  const out = await resolve(body, { "Real.md": "resolved" }, warnings);
+  assert.equal(out, "````md\n![[X]]\n```\n![[Y]]\n````\n\nresolved");
+  assert.equal(warnings.length, 0);
+});
+
 test("alias after | is display-only and ignored", async () => {
   const out = await resolve("![[Target|shown as]]", { "Target.md": "body" });
   assert.equal(out, "body");

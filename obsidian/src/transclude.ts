@@ -22,8 +22,8 @@ export const MAX_EMBED_DEPTH = 5;
 
 const EMBED_RE = /!\[\[([^\[\]]+?)\]\]/g;
 
-/** Strip a single leading YAML frontmatter block. */
-function stripFrontmatter(content: string): string {
+/** Strip a single leading YAML frontmatter block. (Shared with exporter.ts.) */
+export function stripFrontmatter(content: string): string {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "");
 }
 
@@ -49,8 +49,10 @@ function codeMask(text: string): boolean[] {
   for (const line of lines) {
     const fenceMatch = line.match(/^\s*(```+|~~~+)/);
     if (fenceMatch) {
-      if (!inFence) { inFence = true; fenceMarker = fenceMatch[1][0].repeat(3); }
-      else if (fenceMatch[1].startsWith(fenceMarker)) inFence = false;
+      // A closing fence must use the same character and be at least as long as the
+      // opening fence (CommonMark) — a ``` inside a ```` block is content, not a close.
+      if (!inFence) { inFence = true; fenceMarker = fenceMatch[1]; }
+      else if (fenceMatch[1][0] === fenceMarker[0] && fenceMatch[1].length >= fenceMarker.length) inFence = false;
       for (let i = 0; i < line.length; i++) mask[offset + i] = true;
     } else if (inFence) {
       for (let i = 0; i < line.length; i++) mask[offset + i] = true;

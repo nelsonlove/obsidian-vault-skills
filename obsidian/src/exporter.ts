@@ -2,7 +2,7 @@ import type { App } from "obsidian";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { transformAll, SKILL_PASSTHROUGH_FIELDS, type NoteInput, type TreeNode } from "./transform.js";
-import { resolveTransclusions, type EmbedLookup } from "./transclude.js";
+import { resolveTransclusions, stripFrontmatter, type EmbedLookup } from "./transclude.js";
 import { STATIC_FILES } from "./static-skills.js";
 import { assetDirFor, collectAssets, copyAsset, type CollectAssetsOptions } from "./assets.js";
 
@@ -40,11 +40,6 @@ export interface ExportSummary {
   warnings: string[];
   errors: string[];
   outputDir: string;
-}
-
-/** Strip a single leading YAML frontmatter block. */
-function stripFrontmatter(content: string): string {
-  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "");
 }
 
 /** Extract link targets from a frontmatter `parent` value (string or list). */
@@ -98,7 +93,9 @@ function embedLookup(app: App): EmbedLookup {
  *  raw embed syntax (cheap mode for callers that only need the note list). */
 export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELDS, embedWarnings?: string[]): Promise<NoteInput[]> {
   const notes: NoteInput[] = [];
-  const lookup = embedWarnings ? embedLookup(app) : null;
+  const resolve = embedWarnings
+    ? (body: string, from: string) => resolveTransclusions(body, from, embedLookup(app), embedWarnings)
+    : null;
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
     if (!fm) continue;
@@ -106,7 +103,7 @@ export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELD
     if (view.type !== "skill" && view.type !== "agent" && view.type !== "policy") continue;
     const raw = await app.vault.cachedRead(file);
     let body = stripFrontmatter(raw);
-    if (lookup && embedWarnings) body = await resolveTransclusions(body, file.path, lookup, embedWarnings);
+    if (resolve) body = await resolve(body, file.path);
     notes.push({
       path: file.path,
       frontmatter: view,

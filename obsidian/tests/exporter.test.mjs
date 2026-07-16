@@ -7,7 +7,11 @@ import { runExport, collectNotes, analyzeVault, markFrontmatter, readPluginVersi
 
 // Minimal stand-in for Obsidian's App, including wikilink resolution by basename.
 function mockApp(notes) {
-  const files = notes.map((n) => ({ path: n.path, basename: n.path.replace(/\.md$/, "").split("/").pop() }));
+  const files = notes.map((n) => ({
+    path: n.path,
+    basename: n.path.replace(/\.md$/, "").split("/").pop(),
+    extension: n.path.split(".").pop(),
+  }));
   const byPath = new Map(notes.map((n) => [n.path, n]));
   return {
     vault: {
@@ -97,6 +101,33 @@ test("runExport writes the tree: root, child agent, owned skill, plugin.json, ma
   assert.match(fs.readFileSync(path.join(out, "agents/grants.md"), "utf8"), /vault-skills:deadline-sweep/);
 
   fs.rmSync(out, { recursive: true, force: true });
+});
+
+test("runExport resolves transclusions end to end; unresolved embeds warn", async () => {
+  const notes = [
+    ...SAMPLE,
+    { path: "embedder.md", frontmatter: { type: "skill", name: "embedder", parent: "[[grants]]" },
+      content: "---\ntype: skill\n---\n\nBefore.\n\n![[shared-content]]\n\n![[missing-note]]" },
+    // untyped note: not collected as a skill/agent, but reachable as an embed target
+    { path: "lib/shared-content.md", frontmatter: { title: "shared" },
+      content: "---\ntitle: shared\n---\n\nThe shared canonical text." },
+  ];
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "vs-embed-"));
+  const summary = await runExport(mockApp(notes), { outputDir: out, pluginName: "vault-skills" });
+  const skill = fs.readFileSync(path.join(out, "skills/embedder/SKILL.md"), "utf8");
+  assert.match(skill, /The shared canonical text\./, "embed inlined, frontmatter stripped");
+  assert.doesNotMatch(skill, /!\[\[shared-content\]\]/);
+  assert.match(skill, /!\[\[missing-note\]\]/, "unresolved embed left in place");
+  assert.ok(summary.warnings.some((w) => /unresolved transclusion !\[\[missing-note\]\]/.test(w)));
+  fs.rmSync(out, { recursive: true, force: true });
+});
+
+test("analyzeVault surfaces embed warnings", async () => {
+  const notes = [...SAMPLE.slice(0, 2),
+    { path: "s.md", frontmatter: { type: "skill", name: "s", parent: "[[grants]]" },
+      content: "---\ntype: skill\n---\n\n![[nowhere]]" }];
+  const a = await analyzeVault(mockApp(notes));
+  assert.ok(a.warnings.some((w) => /unresolved transclusion/.test(w)));
 });
 
 test("runExport removes stale artifacts when a note disappears", async () => {

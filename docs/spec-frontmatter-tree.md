@@ -93,11 +93,17 @@ body is resolved (inlined) at collection time:
   marker stripped. `|alias` suffixes are display-only and dropped.
 - Resolution is recursive (embeds inside embedded content, resolved relative to the
   *embedded* note's path), with cycle detection and a depth cap of 5.
-- Left untouched: attachment embeds (non-`.md` targets), embeds inside fenced code
+- Left untouched: attachment embeds (non-`.md` targets — by extension, or when an
+  extensionless linkpath resolves to a non-markdown file), embeds inside fenced code
   blocks or inline code spans (documentation *about* embeds), and anything that fails
   to resolve (missing target/section, cycle, depth) — failures surface as warnings in
   export/validate output, never errors.
 - Plain `[[wikilinks]]` are not touched — only `![[embeds]]` are content references.
+- Embedding a **typed** note (another skill/agent/policy) inlines its body *and* the
+  target still compiles independently — mirroring Obsidian semantics (inline for
+  reading, independent existence for structure). In particular, embedding a policy
+  note into an agent that is also inside that policy's scope duplicates the text in
+  that agent's compiled prompt; prefer scoping via `parent` over embedding policies.
 
 ### Supporting files (assets)
 
