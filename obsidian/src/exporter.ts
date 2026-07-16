@@ -2,6 +2,7 @@ import type { App } from "obsidian";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { transformAll, SKILL_PASSTHROUGH_FIELDS, type NoteInput, type TreeNode } from "./transform.js";
+import { resolveTransclusions, stripFrontmatter, type EmbedLookup } from "./transclude.js";
 import { STATIC_FILES } from "./static-skills.js";
 import { assetDirFor, collectAssets, copyAsset, type CollectAssetsOptions } from "./assets.js";
 
@@ -99,11 +100,6 @@ export interface ExportSummary {
   outputDir: string;
 }
 
-/** Strip a single leading YAML frontmatter block. */
-function stripFrontmatter(content: string): string {
-  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "");
-}
-
 /** Extract link targets from a frontmatter `parent` value (string or list). */
 function parentLinkpaths(v: unknown): string[] {
   const arr = Array.isArray(v) ? v : v == null ? [] : [v];
@@ -139,10 +135,26 @@ export function fieldView(fm: Record<string, unknown>, cfg: FieldConfig): { view
   return { view, parent: fm[cfg.prefix + "parent"] };
 }
 
+/** Vault-backed embed lookup: Obsidian linkpath resolution + cached read.
+ *  Returns null for missing targets and for non-markdown files (attachment embeds). */
+function embedLookup(app: App): EmbedLookup {
+  return async (linkpath, fromPath) => {
+    const dest = app.metadataCache.getFirstLinkpathDest(linkpath, fromPath);
+    if (!dest || dest.extension !== "md") return null;
+    return { path: dest.path, content: await app.vault.cachedRead(dest) };
+  };
+}
+
 /** Collect every note marked a skill/agent/policy — by its `type:` field (frontmatter mode) or a
- *  `#{tagPrefix}{kind}` tag (tags mode). Ambiguous tag notes are skipped, reported via `warnings`. */
+ *  `#{tagPrefix}{kind}` tag (tags mode). Ambiguous tag notes are skipped, reported via `warnings`.
+ *  When `warnings` is given, `![[X]]` transclusions in note bodies are also resolved (inlined),
+ *  resolution problems reported through the same sink; without it, bodies keep raw embed syntax
+ *  (cheap mode for callers that only need the note list). */
 export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIELDS, warnings?: string[]): Promise<NoteInput[]> {
   const notes: NoteInput[] = [];
+  const resolve = warnings
+    ? (body: string, from: string) => resolveTransclusions(body, from, embedLookup(app), warnings)
+    : null;
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
     if (!fm) continue; // both modes key off frontmatter (type: field, or the note's tags: list)
@@ -154,12 +166,14 @@ export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIEL
     }
     if (!kind) continue;
     const raw = await app.vault.cachedRead(file);
+    let body = stripFrontmatter(raw);
+    if (resolve) body = await resolve(body, file.path);
     notes.push({
       // Copy the view (never mutate: in nested mode `view` is Obsidian's live cache object) and
       // normalize the kind into `type` so the transform + policy count read one source of truth.
       frontmatter: { ...view, type: kind },
       path: file.path,
-      body: stripFrontmatter(raw),
+      body,
       parentPaths: resolveParents(app, file.path, parent),
     });
   }
