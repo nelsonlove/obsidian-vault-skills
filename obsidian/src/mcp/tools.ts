@@ -57,7 +57,8 @@ export function registerTools(server: McpServer, ctx: ServerCtx): void {
         assetsRoot: expandTilde(s.assetsRoot),
       });
       return ok({
-        skills: summary.skills, agents: summary.agents, assets: summary.assets, removed: summary.removed,
+        skills: summary.skills, agents: summary.agents, commands: summary.commands,
+        assets: summary.assets, removed: summary.removed,
         errors: summary.errors, warnings: summary.warnings, outputDir: summary.outputDir,
         note: "Run /reload-plugins in Claude Code to load the changes.",
       });
@@ -84,7 +85,8 @@ export function registerTools(server: McpServer, ctx: ServerCtx): void {
       });
       return ok({
         version, previous,
-        skills: summary.skills, agents: summary.agents, assets: summary.assets, removed: summary.removed,
+        skills: summary.skills, agents: summary.agents, commands: summary.commands,
+        assets: summary.assets, removed: summary.removed,
         errors: summary.errors, warnings: summary.warnings, outputDir: summary.outputDir,
         note: "Packaged only — commit & tag in the repo to publish.",
       });
@@ -92,12 +94,12 @@ export function registerTools(server: McpServer, ctx: ServerCtx): void {
   });
 
   server.registerTool("vault_skills_mark", {
-    title: "Mark a note as skill / agent / policy",
-    description: "Mark an existing note as a skill/agent/policy, honoring the vault's detection mode: in frontmatter mode it sets the `type` field; in tags mode it appends the configured kind tag (e.g. #agent/skill). Parent/description are written as frontmatter either way. Does not create the note or apply house style. Mutating.",
+    title: "Mark a note as skill / agent / policy / command",
+    description: "Mark an existing note as a skill/agent/policy/command, honoring the vault's detection mode: in frontmatter mode it sets the `type` field; in tags mode it appends the configured kind tag (e.g. #agent/skill). Parent/description are written as frontmatter either way (commands are flat — any parent is ignored and a stale one is cleared). Does not create the note or apply house style. Mutating.",
     inputSchema: {
       path: z.string().min(1).describe("Vault-relative path of the note to mark."),
-      type: z.enum(["skill", "agent", "policy"]),
-      parent: z.string().optional().describe("Parent agent basename or [[wikilink]]; omit for root."),
+      type: z.enum(["skill", "agent", "policy", "command"]),
+      parent: z.string().optional().describe("Parent agent basename or [[wikilink]]; omit for root. Ignored for commands."),
       description: z.string().optional(),
     },
     annotations: RW,

@@ -27,13 +27,13 @@ export interface DetectConfig extends FieldConfig {
 export const DEFAULT_FIELDS: FieldConfig = { mode: "prefix", prefix: "", key: "vault-skills" };
 export const DEFAULT_TAG_PREFIX = "agent/";
 
-/** The note `type` values that produce plugin output (skills, agents, and the policies
- *  folded into agents). Single source of truth for "does this note participate in the
- *  export" — shared by collection (collectNotes), kind detection, and the export-on-save
+/** The note `type` values that produce plugin output (skills, agents, the policies folded into
+ *  agents, and the flat slash commands). Single source of truth for "does this note participate
+ *  in the export" — shared by collection (collectNotes), kind detection, and the export-on-save
  *  relevance check. */
-export const EXPORTABLE_TYPES = ["skill", "agent", "policy"] as const;
-type Kind3 = (typeof EXPORTABLE_TYPES)[number];
-export function isExportableType(type: unknown): type is Kind3 {
+export const EXPORTABLE_TYPES = ["skill", "agent", "policy", "command"] as const;
+type ExportableKind = (typeof EXPORTABLE_TYPES)[number];
+export function isExportableType(type: unknown): type is ExportableKind {
   return (EXPORTABLE_TYPES as readonly unknown[]).includes(type);
 }
 
@@ -58,7 +58,7 @@ export function extractTags(fm: Record<string, unknown> | null | undefined): str
 
 /** Which kind a set of tags declares under `prefix` (case-insensitive, exact leaf), or null;
  *  "ambiguous" when more than one distinct kind tag is present. */
-export function tagKind(tags: string[], prefix: string): Kind3 | null | "ambiguous" {
+export function tagKind(tags: string[], prefix: string): ExportableKind | null | "ambiguous" {
   const have = new Set(tags.map((t) => t.toLowerCase()));
   const hits = EXPORTABLE_TYPES.filter((k) => have.has(`#${prefix}${k}`.toLowerCase()));
   return hits.length === 0 ? null : hits.length > 1 ? "ambiguous" : hits[0];
@@ -70,7 +70,7 @@ export function detectKind(
   view: Record<string, unknown>,
   fm: Record<string, unknown> | null | undefined,
   cfg: DetectConfig,
-): Kind3 | null | "ambiguous" {
+): ExportableKind | null | "ambiguous" {
   if ((cfg.typeSource ?? "frontmatter") === "tags") return tagKind(extractTags(fm), cfg.tagPrefix ?? DEFAULT_TAG_PREFIX);
   return isExportableType(view.type) ? view.type : null;
 }
@@ -93,6 +93,7 @@ export interface ExportOptions {
 export interface ExportSummary {
   skills: number;
   agents: number;
+  commands: number;
   assets: number;
   removed: number;
   warnings: string[];
@@ -268,6 +269,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   return {
     skills: files.filter((g) => g.kind === "skill").length,
     agents: files.filter((g) => g.kind === "agent").length,
+    commands: files.filter((g) => g.kind === "command").length,
     assets: assetCopies.length,
     removed: toRemove.length,
     warnings,
@@ -280,7 +282,7 @@ export interface Analysis {
   tree: TreeNode[];
   errors: string[];
   warnings: string[];
-  counts: { skills: number; agents: number; policies: number };
+  counts: { skills: number; agents: number; policies: number; commands: number };
 }
 
 /** Shared read-only core for `validate` and `tree`: collect + transform, no write. */
@@ -296,12 +298,13 @@ export async function analyzeVault(app: App, fields: DetectConfig = DEFAULT_FIEL
       agents: tree.filter((n) => n.kind === "agent").length,
       skills: tree.filter((n) => n.kind === "skill").length,
       policies: notes.filter((n) => n.frontmatter.type === "policy").length,
+      commands: notes.filter((n) => n.frontmatter.type === "command").length,
     },
   };
 }
 
 export interface MarkInput {
-  type: "skill" | "agent" | "policy";
+  type: "skill" | "agent" | "policy" | "command";
   parent?: string;      // agent basename or [[wikilink]]; empty ⇒ root
   description?: string;
   root?: boolean;
@@ -310,6 +313,9 @@ export interface MarkInput {
 export interface MarkResult {
   /** Frontmatter keys to Object.assign onto the note (already namespaced per field mode). */
   set: Record<string, unknown>;
+  /** Frontmatter keys to delete (already namespaced) — e.g. the tree-only fields when demoting a
+   *  note to a flat command, so a stale `parent`/`root`/… doesn't linger as misleading metadata. */
+  unset: string[];
   /** Kind tags (with a leading `#`) to append to the note's `tags` — non-empty only in tags mode. */
   addTags: string[];
   /** Kind tags (with a leading `#`) to strip from `tags` before appending — the whole
@@ -331,18 +337,25 @@ export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT
     // strip every sibling kind tag first, so re-marking swaps the kind (not two → "ambiguous")
     for (const k of EXPORTABLE_TYPES) removeTags.push(`#${prefix}${k}`);
   } else flat.type = input.type;
+  const isCommand = input.type === "command";
   if (input.root) flat.root = true;
-  if (input.parent) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
+  // Commands are flat — a parent is meaningless, so never write one (and clear a stale one below).
+  if (input.parent && !isCommand) flat.parent = input.parent.startsWith("[[") ? input.parent : `[[${input.parent}]]`;
   if (input.description) flat.description = input.description;
 
   let set: Record<string, unknown>;
-  if (fields.mode === "nested") set = Object.keys(flat).length ? { [fields.key]: flat } : {};
-  else {
-    // prefix mode — a blank prefix yields bare top-level fields
+  const unset: string[] = [];
+  if (fields.mode === "nested") {
+    // Nested mode replaces the whole object, so stale sub-fields drop on their own.
+    set = Object.keys(flat).length ? { [fields.key]: flat } : {};
+  } else {
+    // prefix mode — a blank prefix yields bare top-level fields. Individual keys are set in place,
+    // so demoting to a command must explicitly clear the tree-only fields it leaves behind.
     set = {};
     for (const [k, v] of Object.entries(flat)) set[fields.prefix + k] = v;
+    if (isCommand) for (const k of ["parent", "root", "crosscutting", "slot"]) unset.push(fields.prefix + k);
   }
-  return { set, addTags, removeTags };
+  return { set, unset, addTags, removeTags };
 }
 
 /** Apply a {@link markFrontmatter} result to a note's frontmatter object in place: assign the
@@ -351,6 +364,7 @@ export function markFrontmatter(input: MarkInput, fields: DetectConfig = DEFAULT
  *  way {@link extractTags} reads it, so pre-existing tags survive as distinct entries. */
 export function applyMark(fm: Record<string, unknown>, result: MarkResult): void {
   Object.assign(fm, result.set);
+  for (const k of result.unset ?? []) delete fm[k];
   const addTags = result.addTags ?? [];
   const removeTags = result.removeTags ?? [];
   if (!addTags.length && !removeTags.length) return;

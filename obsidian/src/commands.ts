@@ -59,7 +59,7 @@ function pick<T>(app: App, items: T[], label: (t: T) => string): Promise<T | und
 export async function cmdValidate(plugin: VaultSkillsPlugin): Promise<void> {
   const a = await analyzeVault(plugin.app, fieldsOf(plugin.settings), plugin.settings.pluginName);
   const lines = [
-    `${a.counts.agents} agents · ${a.counts.skills} skills · ${a.counts.policies} policies`,
+    `${a.counts.agents} agents · ${a.counts.skills} skills · ${a.counts.policies} policies · ${a.counts.commands} commands`,
     "",
     ...(a.errors.length ? ["Errors:", ...a.errors.map((e) => "  ✖ " + e)] : ["No errors ✓"]),
     ...(a.warnings.length ? ["", "Warnings:", ...a.warnings.map((w) => "  ⚠ " + w)] : []),
@@ -87,15 +87,19 @@ export async function cmdMark(plugin: VaultSkillsPlugin): Promise<void> {
   if (!file) { new Notice("Vault Skills: no active note."); return; }
   const fields = fieldsOf(plugin.settings);
 
-  const type = await pick(plugin.app, ["agent", "skill", "policy"] as const, (t) => t);
+  const type = await pick(plugin.app, ["agent", "skill", "policy", "command"] as const, (t) => t);
   if (!type) return;
 
-  const notes = await collectNotes(plugin.app, fields);
-  const agents = notes.filter((n) => n.frontmatter.type === "agent").map((n) => base(n.path)).sort();
-  const NONE = "— none (attach to root) —";
-  const choice = await pick(plugin.app, [NONE, ...agents], (t) => t);
-  if (choice === undefined) return;
-  const parent = choice === NONE ? undefined : choice;
+  // Commands are flat — no parent. Every other kind is placed under an agent.
+  let parent: string | undefined;
+  if (type !== "command") {
+    const notes = await collectNotes(plugin.app, fields);
+    const agents = notes.filter((n) => n.frontmatter.type === "agent").map((n) => base(n.path)).sort();
+    const NONE = "— none (attach to root) —";
+    const choice = await pick(plugin.app, [NONE, ...agents], (t) => t);
+    if (choice === undefined) return;
+    parent = choice === NONE ? undefined : choice;
+  }
 
   const result = markFrontmatter({ type, parent } as MarkInput, fields);
   await plugin.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => { applyMark(fm, result); });
@@ -131,7 +135,7 @@ export async function cmdRelease(plugin: VaultSkillsPlugin): Promise<void> {
     const issues = summary.errors.length ? ` · ${summary.errors.length} error(s): ${summary.errors[0]}` : "";
     new Notice(
       `Vault Skills: packaged ${version} → ${releaseDir}\n` +
-        `${summary.skills} skill(s) + ${summary.agents} agent(s) + ${summary.assets} supporting file(s)${issues}\n` +
+        `${summary.skills} skill(s) + ${summary.agents} agent(s) + ${summary.commands} command(s) + ${summary.assets} supporting file(s)${issues}\n` +
         `Commit & tag in the repo to publish.`,
       summary.errors.length ? 12000 : 8000,
     );

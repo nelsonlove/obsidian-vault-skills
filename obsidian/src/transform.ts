@@ -5,10 +5,17 @@
 // it: each agent owns the skills whose parent is it (preloaded via `skills:`) and delegates
 // to the agents whose parent is it. See docs/spec-frontmatter-tree.md.
 //
+// `type: command` notes are flat — they take no part in the tree (no parent, no ownership) and
+// emit a Claude Code slash command at `commands/<name>.md`. `type: policy` bodies are injected
+// into agents.
+//
 // No `obsidian`/`fs` imports — unit-testable. Parent wikilinks are resolved to note paths by
 // exporter.ts (Obsidian); this module works purely on those paths.
 
+/** Tree kinds — participate in the parent/ownership tree. */
 export type Kind = "skill" | "agent";
+/** Everything the transform emits as a file (commands are flat, outside the tree). */
+export type EmittedKind = Kind | "command";
 
 export interface NoteInput {
   path: string;
@@ -19,7 +26,7 @@ export interface NoteInput {
 }
 
 export interface Generated {
-  kind: Kind;
+  kind: EmittedKind;
   relOut: string;
   content: string;
   from: string;
@@ -80,6 +87,15 @@ interface Policy {
   body: string;
 }
 
+interface Command {
+  path: string;
+  nameBase: string;
+  rawDesc: string;
+  extra: Record<string, unknown>;
+  body: string;
+  genName: string;
+}
+
 const SYNTH_ROOT_PATH = " synth-root";
 
 /** Documented SKILL.md frontmatter keys passed through verbatim from a skill note
@@ -94,7 +110,52 @@ export const SKILL_PASSTHROUGH_FIELDS = [
   "model", "effort", "context", "agent", "paths", "shell",
 ] as const;
 
+/** Claude Code slash-command frontmatter keys passed through verbatim from a `type: command`
+ *  note (`description` is handled separately). Curated allowlist, same rationale as
+ *  SKILL_PASSTHROUGH_FIELDS — keep Obsidian housekeeping fields out of the emitted command. */
+export const COMMAND_PASSTHROUGH_FIELDS = [
+  "argument-hint", "allowed-tools", "disallowed-tools", "model",
+] as const;
+
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+/** Passthrough values must survive the flat YAML emitter: scalars and arrays of scalars only. */
+const isScalar = (x: unknown): boolean => ["string", "number", "boolean"].includes(typeof x);
+
+/** Collect an allowlisted set of frontmatter keys that are scalar (or scalar lists); anything
+ *  nested is dropped with a warning, since the flat YAML emitter can't render it. */
+function passthrough(
+  fm: Record<string, unknown>,
+  keys: readonly string[],
+  path: string,
+  warnings: string[],
+): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  for (const f of keys) {
+    const v = fm[f];
+    if (v == null) continue;
+    if (isScalar(v) || (Array.isArray(v) && v.every(isScalar))) extra[f] = v;
+    else warnings.push(`${path}: passthrough field \`${f}\` has a nested value — dropped (only scalars and lists of scalars are exported)`);
+  }
+  return extra;
+}
+
+/** Description fallback shared by skills/agents and commands: the note's `description`, else the
+ *  name humanized (dashes → spaces). `nameBase` is the already-slugged name, so this reuses it
+ *  rather than re-slugging. */
+function descFallback(fm: Record<string, unknown>, nameBase: string): string {
+  return (str(fm.description) || nameBase.replace(/-/g, " ")).trim();
+}
+
+/** Uniquify `base` against `used` (mutated), appending `-2`, `-3`, … on collision. Shared by the
+ *  tree-node and command naming passes so both dedup the same `/plugin:<name>` namespace identically. */
+function uniqueName(base: string, used: Set<string>): { name: string; collided: boolean } {
+  const collided = used.has(base);
+  let name = base, k = 2;
+  while (used.has(name)) name = `${base}-${k++}`;
+  used.add(name);
+  return { name, collided };
+}
 
 function toolsArray(v: unknown): string[] | undefined {
   if (Array.isArray(v)) return v.map(String);
@@ -147,36 +208,41 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
   // ---- phase 1: parse candidate nodes ----
   const nodes: Node[] = [];
   const policies: Policy[] = [];
+  const commands: Command[] = [];
   for (const note of notes) {
     const fm = note.frontmatter || {};
     if (fm.type === "policy") {
       policies.push({ path: note.path, parentPaths: note.parentPaths ?? [], body: note.body.trim() });
       continue;
     }
+    if (fm.type === "command") {
+      // Flat: commands take no part in the tree — no parent, no ownership. `name` (or the
+      // filename) becomes the slash-command name; the body is the prompt template.
+      const nameBase = slug(str(fm.name) || fileBaseOf(note.path));
+      commands.push({
+        path: note.path,
+        nameBase,
+        rawDesc: descFallback(fm, nameBase),
+        extra: passthrough(fm, COMMAND_PASSTHROUGH_FIELDS, note.path, warnings),
+        body: note.body.trim(),
+        genName: "",
+      });
+      continue;
+    }
     const kind: Kind | null = fm.type === "agent" ? "agent" : fm.type === "skill" ? "skill" : null;
     if (!kind) continue;
     const fileBase = fileBaseOf(note.path);
-    // Passthrough values must survive the flat YAML emitter: scalars and arrays of
-    // scalars only. Nested values would render as "[object Object]" — drop with a warning.
-    const isScalar = (x: unknown): boolean => ["string", "number", "boolean"].includes(typeof x);
-    const extra: Record<string, unknown> = {};
-    if (kind === "skill") {
-      for (const f of SKILL_PASSTHROUGH_FIELDS) {
-        const v = fm[f];
-        if (v == null) continue;
-        if (isScalar(v) || (Array.isArray(v) && v.every(isScalar))) extra[f] = v;
-        else warnings.push(`${note.path}: passthrough field \`${f}\` has a nested value — dropped (only scalars and lists of scalars are exported)`);
-      }
-    }
+    const extra = kind === "skill" ? passthrough(fm, SKILL_PASSTHROUGH_FIELDS, note.path, warnings) : {};
+    const nameBase = slug(str(fm.name) || fileBase);
     nodes.push({
       kind,
       path: note.path,
       isRoot: fm.root === true,
       parentPaths: note.parentPaths ?? [],
-      nameBase: slug(str(fm.name) || fileBase),
+      nameBase,
       id: str(fm.id),
       label: str(fm.label) || str(fm.name) || fileBase,
-      rawDesc: String(str(fm.description) || slug(str(fm.name) || fileBase).replace(/-/g, " ")).trim(),
+      rawDesc: descFallback(fm, nameBase),
       version: str(fm.version),
       tools: toolsArray(fm.tools),
       model: str(fm.model),
@@ -277,10 +343,15 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
   for (const n of nodes) {
     if (!n.valid) continue;
     const base = n.id ? `${n.id}-${n.nameBase}` : n.nameBase;
-    let name = base; let k = 2;
-    while (used.has(name)) name = `${base}-${k++}`;
-    used.add(name);
-    n.genName = name;
+    n.genName = uniqueName(base, used).name;
+  }
+  // Commands share the /plugin:<name> namespace with skills, so dedup against the same set —
+  // a command and a skill both named `foo` would otherwise both claim `/plugin:foo`.
+  for (const c of commands) {
+    if (!c.nameBase) { errors.push(`${c.path}: command has an empty name — set a \`name:\` or give the note a filename with alphanumerics`); continue; }
+    const { name, collided } = uniqueName(c.nameBase, used);
+    if (collided) warnings.push(`${c.path}: command name \`${c.nameBase}\` collides with an existing skill/agent/command — renamed to \`${name}\``);
+    c.genName = name;
   }
 
   const breadcrumb = (n: Node): string => {
@@ -345,6 +416,16 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     const src = n.path === SYNTH_ROOT_PATH ? "(synthesized root)" : n.path;
     generated.push({ kind: "agent", relOut: `agents/${n.genName}.md`, from: src,
       content: `${fmOut}\n\n${provenanceFor(src)}\n\n${bodyOut}\n` });
+  }
+
+  // ---- commands (flat): emit a Claude Code slash command per note ----
+  for (const c of commands) {
+    if (!c.genName) continue; // empty-name command errored above, nothing to emit
+    // No name/breadcrumb in the frontmatter: the slash-command name is the filename, and a
+    // command has no scope in the tree. Body is the prompt template ($ARGUMENTS, !bash, @file).
+    const fmOut = toYaml({ description: c.rawDesc, ...c.extra });
+    generated.push({ kind: "command", relOut: `commands/${c.genName}.md`, from: c.path,
+      content: `${fmOut}\n\n${provenanceFor(c.path)}\n\n${c.body}\n` });
   }
 
   const tree: TreeNode[] = nodes.filter((n) => n.valid).map((n) => ({

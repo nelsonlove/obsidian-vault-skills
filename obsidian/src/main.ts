@@ -29,7 +29,7 @@ export default class VaultSkillsPlugin extends Plugin {
     });
     this.addCommand({ id: "validate", name: "Validate tree", callback: () => void cmdValidate(this) });
     this.addCommand({ id: "tree", name: "Show tree", callback: () => void cmdTree(this) });
-    this.addCommand({ id: "mark", name: "Mark note as skill / agent / policy", callback: () => void cmdMark(this) });
+    this.addCommand({ id: "mark", name: "Mark note as skill / agent / policy / command", callback: () => void cmdMark(this) });
     this.addCommand({ id: "release", name: "Export release to repo", callback: () => void cmdRelease(this) });
 
     // Optional: re-export when a skill/agent/policy note changes. The export is debounced
@@ -91,6 +91,7 @@ export default class VaultSkillsPlugin extends Plugin {
 
       new Notice(
         `Vault Skills: exported ${summary.skills} skill(s) + ${summary.agents} agent(s)` +
+          (summary.commands ? ` + ${summary.commands} command(s)` : "") +
           (summary.removed ? `, removed ${summary.removed}` : "") +
           err +
           warn +
