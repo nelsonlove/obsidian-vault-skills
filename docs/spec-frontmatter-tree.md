@@ -29,6 +29,7 @@ its skills; `root → … → leaf` delegation). Folders become purely organizat
 | `version` | no | skill | Skill version. |
 | `crosscutting` | no | agent | `true` ⇒ horizontal slot agent; fanned into every scope agent's routing, excluded from vertical lanes. |
 | `slot` | no | agent | Display-only standard-zero label for a cross-cutting agent, e.g. `.00`. |
+| `severity` | no | policy | `hard` ⇒ the policy is also compiled **full-text into every crosscutting agent** (ruin-risk rules get no read step to skip). Default (absent/other): soft — subtree injection plus a pointer in the scope-policy index. |
 | *passthrough* | no | skill | The documented SKILL.md keys `when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `allowed-tools`, `disallowed-tools`, `model`, `effort`, `context`, `agent`, `paths`, `shell` are copied into the generated SKILL.md verbatim (same namespacing as all fields). All other frontmatter is ignored. `hooks` is not passed through (nested YAML). |
 
 ¹ Omitting `parent` means "child of the root" — it is not an error.
@@ -135,6 +136,29 @@ agent in its parent's subtree** (root ⇒ all agents). For each agent, applicabl
 bodies are gathered along its ancestor-or-self chain, root-most first, and appended after
 the Vault-access line. Validation: multiple parents, an unresolved parent, or a parent that
 isn't a valid agent ⇒ error (the policy is dropped).
+
+### Scope-policy index (visitor delivery)
+
+Subtree injection is by **lineage**, but crosscutting agents work inside *other* scopes'
+content, and a spawned subagent inherits nothing from its dispatcher — so each
+crosscutting agent also gets a generated **`## Scope policies`** section: per scope agent
+(breadcrumbed label + namespaced name), the titles and vault paths of the policies
+attached directly to it. The paths are **discovered at collection** — no vault-layout
+convention is assumed (see the design principle below). Excluded from the index:
+root-attached policies and anything on the visitor's own lineage (already injected), and
+crosscutting agents themselves (they aren't scopes to visit). `severity: hard` policies
+are inlined in full instead of pointer-listed, prefixed with the scope they bind in.
+Scope identity reaches the visitor through the dispatch brief — the generated
+Cross-cutting specialists section already tells dispatchers to name the scope.
+
+### Design principle: frontmatter over geography
+
+Engine structure and behavior derive from **frontmatter only** — tree edges, kinds,
+ownership, policy scoping, and visitor delivery never assume a vault layout. Vault paths
+may appear in generated *output* as discovered data (provenance comments, the scope-policy
+index), valid for any layout; they must never be baked in as *conventions* the vault has
+to follow. Layout-specific enforcement (e.g. path-guard hooks) belongs in a user's
+personal harness config, not in this plugin.
 
 ## Horizontal axis (cross-cutting agents)
 

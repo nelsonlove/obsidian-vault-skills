@@ -144,6 +144,39 @@ test("policy whose parent is a skill is an error", () => {
   assert.ok(errors.some((e) => /policy parent is not an agent/.test(e)));
 });
 
+test("crosscutting agent gets a scope-policy index; global + own-lineage policies excluded", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("legal.md", { type: "agent", name: "legal", label: "Legal" }, ["root.md"]),
+    note("capture.md", { type: "agent", name: "capture" }, ["root.md"]),
+    note("triager.md", { type: "agent", name: "triager", crosscutting: true }, ["capture.md"]),
+    note("gp.md", { type: "policy", name: "gp" }, [], "GLOBAL-POLICY"),
+    note("lp.md", { type: "policy" }, ["legal.md"], "LEGAL-SOFT-POLICY"),
+    note("cp.md", { type: "policy" }, ["capture.md"], "CAPTURE-POLICY"),
+  ], OPTS);
+  const triager = find(generated, "agents/triager.md");
+  assert.match(triager.content, /## Scope policies/);
+  assert.match(triager.content, /- Legal \(`vault-skills:legal`\): lp \(`lp\.md`\)/, "scoped policy listed as title + discovered path");
+  assert.doesNotMatch(triager.content, /LEGAL-SOFT-POLICY/, "soft policy is a pointer, not inlined");
+  assert.equal(triager.content.match(/GLOBAL-POLICY/g).length, 1, "global policy appears only via own injection, not the index");
+  assert.doesNotMatch(triager.content, /Scope policies[\s\S]*cp\.md/, "own-lineage policy not in the index");
+  const legal = find(generated, "agents/legal.md");
+  assert.doesNotMatch(legal.content, /## Scope policies/, "non-crosscutting agents don't get the index");
+});
+
+test("severity: hard policy is inlined in full into crosscutting agents", () => {
+  const { generated } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true }),
+    note("legal.md", { type: "agent", name: "legal", label: "Legal" }, ["root.md"]),
+    note("triager.md", { type: "agent", name: "triager", crosscutting: true }, ["root.md"]),
+    note("hp.md", { type: "policy", severity: "hard" }, ["legal.md"], "NEVER-ALTER-EVIDENCE"),
+  ], OPTS);
+  const triager = find(generated, "agents/triager.md");
+  assert.match(triager.content, /hp \(hard — included in full below\)/, "index marks it hard");
+  assert.match(triager.content, /\*\*Hard policy — binds when working in Legal:\*\*\n\nNEVER-ALTER-EVIDENCE/);
+  assert.doesNotMatch(find(generated, "agents/vault.md").content, /NEVER-ALTER-EVIDENCE/, "root untouched");
+});
+
 test("transform exposes a structured tree (parent/children/skills)", () => {
   const { tree } = transformAll([
     note("root.md", { type: "agent", name: "vault", root: true }),

@@ -78,6 +78,10 @@ interface Policy {
   path: string;
   parentPaths: string[];
   body: string;
+  /** Note basename — display title in the generated scope-policy index. */
+  title: string;
+  /** `severity: hard` — compiled full-text into crosscutting agents, not just the subtree. */
+  hard: boolean;
 }
 
 const SYNTH_ROOT_PATH = " synth-root";
@@ -150,7 +154,10 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
   for (const note of notes) {
     const fm = note.frontmatter || {};
     if (fm.type === "policy") {
-      policies.push({ path: note.path, parentPaths: note.parentPaths ?? [], body: note.body.trim() });
+      policies.push({
+        path: note.path, parentPaths: note.parentPaths ?? [], body: note.body.trim(),
+        title: fileBaseOf(note.path), hard: fm.severity === "hard",
+      });
       continue;
     }
     const kind: Kind | null = fm.type === "agent" ? "agent" : fm.type === "skill" ? "skill" : null;
@@ -252,7 +259,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
 
   // ---- resolve policy notes: attach each to the agent whose subtree it governs ----
   // (no parent ⇒ root ⇒ applies to every agent; strict single parent, must be an agent).
-  const policyBodiesByNode = new Map<string, string[]>();
+  const policiesByNode = new Map<string, Policy[]>();
   for (const pol of policies) {
     let parent: Node | null;
     if (pol.parentPaths.length > 1) { errors.push(`${pol.path}: policy has multiple parents (strict single-parent)`); continue; }
@@ -261,16 +268,17 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     if (!parent) { errors.push(`${pol.path}: policy has an unresolved or missing parent`); continue; }
     if (parent.kind !== "agent") { errors.push(`${pol.path}: policy parent is not an agent`); continue; }
     if (!parent.valid) { errors.push(`${pol.path}: policy parent is invalid`); continue; }
-    const arr = policyBodiesByNode.get(parent.path) ?? [];
-    arr.push(pol.body);
-    policyBodiesByNode.set(parent.path, arr);
+    const arr = policiesByNode.get(parent.path) ?? [];
+    arr.push(pol);
+    policiesByNode.set(parent.path, arr);
   }
   // Policies governing an agent = those attached to any ancestor-or-self, root-most first.
-  const applicablePolicies = (n: Node): string[] => {
+  const applicablePolicyObjs = (n: Node): Policy[] => {
     const chain: Node[] = [];
     for (let cur: Node | null = n; cur; cur = cur.parent) chain.unshift(cur);
-    return chain.flatMap((node) => policyBodiesByNode.get(node.path) ?? []);
+    return chain.flatMap((node) => policiesByNode.get(node.path) ?? []);
   };
+  const applicablePolicies = (n: Node): string[] => applicablePolicyObjs(n).map((p) => p.body);
 
   // ---- phase 6: names (dedup) ----
   const used = new Set<string>();
@@ -340,6 +348,33 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     if (crosscut.length && !n.crosscutting) {
       const specialists = crosscut.map((c) => `- \`${opts.pluginName}:${c.genName}\`${c.slot ? ` (${c.slot})` : ""}`);
       bodyOut += `\n\n## Cross-cutting specialists\n\nFor single-craft work on a standard-zero slot of your scope (${scopeOf(n)}), prefer the matching specialist and tell it which scope to work on — their full descriptions are already visible to you. Delegate via the Agent tool:\n${specialists.join("\n")}`;
+    }
+    if (n.crosscutting) {
+      // Scope-policy index: a crosscutting agent works inside other scopes' content, but
+      // compile-time injection only carries its own lineage. Give it a generated map of
+      // scope → binding policies (discovered paths — no layout convention assumed), and
+      // inline `severity: hard` policies in full so ruin-risk rules have no read step.
+      const own = new Set(applicablePolicyObjs(n).map((p) => p.path));
+      const entries: string[] = [];
+      const hardInline: { pol: Policy; scope: string }[] = [];
+      for (const a of nodes) {
+        if (!a.valid || a.kind !== "agent" || a.crosscutting || a.isRoot) continue;
+        const pols = (policiesByNode.get(a.path) ?? []).filter((p) => !own.has(p.path));
+        if (!pols.length) continue;
+        const items = pols.map((p) => {
+          if (p.hard) { hardInline.push({ pol: p, scope: scopeOf(a) }); return `${p.title} (hard — included in full below)`; }
+          return `${p.title} (\`${p.path}\`)`;
+        });
+        entries.push(`- ${scopeOf(a)} (\`${opts.pluginName}:${a.genName}\`): ${items.join("; ")}`);
+      }
+      if (entries.length) {
+        bodyOut += `\n\n## Scope policies\n\nScoped policies bind any agent working on that scope's content, including you — your dispatch brief names the scope. Before working in a scope listed below, read its policy notes (and those of the scopes above it in its breadcrumb):\n${entries.join("\n")}`;
+        const seen = new Set<string>();
+        const blocks = hardInline
+          .filter((h) => !seen.has(h.pol.path) && seen.add(h.pol.path))
+          .map((h) => `**Hard policy — binds when working in ${h.scope}:**\n\n${h.pol.body}`);
+        if (blocks.length) bodyOut += `\n\n${blocks.join("\n\n")}`;
+      }
     }
 
     const src = n.path === SYNTH_ROOT_PATH ? "(synthesized root)" : n.path;

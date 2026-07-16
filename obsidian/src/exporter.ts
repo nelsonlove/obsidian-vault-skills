@@ -120,7 +120,7 @@ function resolveParents(app: App, sourcePath: string, v: unknown): string[] {
 // The vault-skills fields the transform reads (parent is handled separately, resolved to
 // paths), plus the SKILL.md passthrough fields — all namespaced the same way.
 const VS_FIELDS = [...new Set(["type", "root", "name", "id", "label", "description", "version", "tools", "model",
-  "crosscutting", "slot", ...SKILL_PASSTHROUGH_FIELDS])];
+  "crosscutting", "slot", "severity", ...SKILL_PASSTHROUGH_FIELDS])];
 
 /** Extract a bare view of the vault-skills fields (+ the raw parent value) per the field mode,
  *  so the pure transform stays namespace-agnostic. */
