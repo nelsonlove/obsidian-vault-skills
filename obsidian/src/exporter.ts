@@ -2,6 +2,7 @@ import type { App } from "obsidian";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { transformAll, SKILL_PASSTHROUGH_FIELDS, type NoteInput, type TreeNode } from "./transform.js";
+import { resolveTransclusions, type EmbedLookup } from "./transclude.js";
 import { STATIC_FILES } from "./static-skills.js";
 import { assetDirFor, collectAssets, copyAsset, type CollectAssetsOptions } from "./assets.js";
 
@@ -81,19 +82,35 @@ export function fieldView(fm: Record<string, unknown>, cfg: FieldConfig): { view
   return { view, parent: fm[cfg.prefix + "parent"] };
 }
 
-/** Collect every note whose (namespaced) frontmatter marks it a skill/agent/policy. */
-export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELDS): Promise<NoteInput[]> {
+/** Vault-backed embed lookup: Obsidian linkpath resolution + cached read.
+ *  Returns null for missing targets and for non-markdown files (attachment embeds). */
+function embedLookup(app: App): EmbedLookup {
+  return async (linkpath, fromPath) => {
+    const dest = app.metadataCache.getFirstLinkpathDest(linkpath, fromPath);
+    if (!dest || dest.extension !== "md") return null;
+    return { path: dest.path, content: await app.vault.cachedRead(dest) };
+  };
+}
+
+/** Collect every note whose (namespaced) frontmatter marks it a skill/agent/policy.
+ *  When `embedWarnings` is given, `![[X]]` transclusions in note bodies are resolved
+ *  (inlined) and any resolution problems are appended to it; without it, bodies keep
+ *  raw embed syntax (cheap mode for callers that only need the note list). */
+export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELDS, embedWarnings?: string[]): Promise<NoteInput[]> {
   const notes: NoteInput[] = [];
+  const lookup = embedWarnings ? embedLookup(app) : null;
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
     if (!fm) continue;
     const { view, parent } = fieldView(fm, fields);
     if (view.type !== "skill" && view.type !== "agent" && view.type !== "policy") continue;
     const raw = await app.vault.cachedRead(file);
+    let body = stripFrontmatter(raw);
+    if (lookup && embedWarnings) body = await resolveTransclusions(body, file.path, lookup, embedWarnings);
     notes.push({
       path: file.path,
       frontmatter: view,
-      body: stripFrontmatter(raw),
+      body,
       parentPaths: resolveParents(app, file.path, parent),
     });
   }
@@ -101,11 +118,13 @@ export async function collectNotes(app: App, fields: FieldConfig = DEFAULT_FIELD
 }
 
 export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
-  const notes = await collectNotes(app, opts.fields ?? DEFAULT_FIELDS);
+  const embedWarnings: string[] = [];
+  const notes = await collectNotes(app, opts.fields ?? DEFAULT_FIELDS, embedWarnings);
   // FileSystemAdapter exposes getBasePath(); duck-type it to keep `obsidian` type-only.
   const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
   const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
+  warnings.unshift(...embedWarnings);
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription, opts.version);
 
@@ -203,10 +222,12 @@ export interface Analysis {
 
 /** Shared read-only core for `validate` and `tree`: collect + transform, no write. */
 export async function analyzeVault(app: App, fields: FieldConfig = DEFAULT_FIELDS, pluginName = "vault-skills"): Promise<Analysis> {
-  const notes = await collectNotes(app, fields);
+  const embedWarnings: string[] = [];
+  const notes = await collectNotes(app, fields, embedWarnings);
   const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
   const { tree, warnings, errors } = transformAll(notes, { pluginName, synthesizeRoot: true, vaultPath });
+  warnings.unshift(...embedWarnings);
   return {
     tree, errors, warnings,
     counts: {
