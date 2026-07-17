@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { transformAll, SKILL_PASSTHROUGH_FIELDS, type NoteInput, type TreeNode } from "./transform.js";
 import { resolveTransclusions, stripFrontmatter, type EmbedLookup } from "./transclude.js";
+import { buildGuardManifest, buildHooksJson, GUARD_PY, GUARD_SCRIPT } from "./guard.js";
 import { STATIC_FILES } from "./static-skills.js";
 import { assetDirFor, collectAssets, copyAsset, type CollectAssetsOptions } from "./assets.js";
 
@@ -121,7 +122,7 @@ function resolveParents(app: App, sourcePath: string, v: unknown): string[] {
 // The vault-skills fields the transform reads (parent is handled separately, resolved to
 // paths), plus the SKILL.md passthrough fields — all namespaced the same way.
 const VS_FIELDS = [...new Set(["type", "root", "name", "id", "label", "description", "version", "tools", "model",
-  "crosscutting", "slot", "severity", ...SKILL_PASSTHROUGH_FIELDS])];
+  "crosscutting", "slot", "severity", "territory", ...SKILL_PASSTHROUGH_FIELDS])];
 
 /** Extract a bare view of the vault-skills fields (+ the raw parent value) per the field mode,
  *  so the pure transform stays namespace-agnostic. */
@@ -187,7 +188,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   // FileSystemAdapter exposes getBasePath(); duck-type it to keep `obsidian` type-only.
   const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
-  const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
+  const { generated, warnings, errors, guards } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
   warnings.unshift(...collectWarnings);
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription, opts.version);
@@ -197,12 +198,27 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   let prev: string[] = [];
   try { prev = JSON.parse(fs.readFileSync(manifestPath, "utf8")).files ?? []; } catch { /* no prior manifest */ }
 
-  // Emit generated content plus the shipped static skills (static wins on name collision),
-  // so one export yields the complete plugin at the output dir — no separate symlink.
-  const staticRelOuts = new Set(STATIC_FILES.map((s) => s.relOut));
+  // Territory guards: when any scope declares territory + hard policies, hooks.json is
+  // generated (base static content + PreToolUse doorman) and replaces the static copy,
+  // alongside the guard script and its manifest.
+  const guardFiles = guards.length
+    ? [
+        { kind: "hook" as const, relOut: "hooks/hooks.json", content: buildHooksJson(true), from: "(generated)" },
+        { kind: "hook" as const, relOut: "hooks/scope-guard.sh", content: GUARD_SCRIPT, from: "(generated)" },
+        { kind: "hook" as const, relOut: "hooks/scope-guard.py", content: GUARD_PY, from: "(generated)" },
+        { kind: "hook" as const, relOut: "hooks/guard-manifest.json", content: buildGuardManifest(vaultPath, guards), from: "(generated)" },
+      ]
+    : [];
+
+  // Emit generated content plus the shipped static skills (static wins on name collision,
+  // except the guard-generated hooks.json), so one export yields the complete plugin at
+  // the output dir — no separate symlink.
+  const staticFiles = guards.length ? STATIC_FILES.filter((s) => s.relOut !== "hooks/hooks.json") : STATIC_FILES;
+  const staticRelOuts = new Set(staticFiles.map((s) => s.relOut));
   const files = [
     ...generated.filter((g) => !staticRelOuts.has(g.relOut)),
-    ...STATIC_FILES.map((s) => ({ kind: s.kind, relOut: s.relOut, content: s.content, from: "(static)" })),
+    ...staticFiles.map((s) => ({ kind: s.kind, relOut: s.relOut, content: s.content, from: "(static)" })),
+    ...guardFiles,
   ];
 
   // Supporting files: each skill note may have a parallel folder of assets (scripts,
@@ -250,6 +266,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     const abs = path.join(opts.outputDir, g.relOut);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, g.content);
+    if (g.relOut === "hooks/scope-guard.sh") { try { fs.chmodSync(abs, 0o755); } catch { /* non-POSIX fs */ } }
   }
   for (const a of assetCopies) {
     try {
