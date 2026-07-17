@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { App, TFile } from "obsidian";
 import { ok, fail } from "./helpers.js";
-import { analyzeVault, applyMark, runExport, markFrontmatter, readPluginVersion } from "../exporter.js";
+import { analyzeVault, applyMark, previewVault, runExport, markFrontmatter, readPluginVersion } from "../exporter.js";
 import { expandTilde } from "../paths.js";
 import { fieldsOf, type VaultSkillsSettings } from "../settings.js";
 
@@ -41,6 +41,36 @@ export function registerTools(server: McpServer, ctx: ServerCtx): void {
       const s = ctx.getSettings();
       const a = await analyzeVault(app, fieldsOf(s), s.pluginName);
       return ok({ tree: a.tree, counts: a.counts });
+    } catch (e) { return fail(e); }
+  });
+
+  server.registerTool("vault_skills_preview", {
+    title: "Preview the compiled plugin output",
+    description: "Run the transform without writing and diff it against the current export. No args: a manifest of every file the export would write ({kind, relOut, from, name, description, bytes, status: added|modified|unchanged}) plus removed files, diff counts, and policy placements. `name`: return one entry (matched by generated name, output path, or source note path) with its full compiled content, plus the currently exported content when modified. `content: true`: include full compiled content for every entry (large). Read-only.",
+    inputSchema: {
+      name: z.string().optional().describe("Generated name, output path, or source note path of one entry to return in full."),
+      content: z.boolean().optional().describe("Include full compiled content for every entry (large)."),
+    },
+    annotations: RO,
+  }, async ({ name, content }) => {
+    try {
+      const s = ctx.getSettings();
+      const p = await previewVault(app, { outputDir: expandTilde(s.outputDir), pluginName: s.pluginName, fields: fieldsOf(s) });
+      const summary = {
+        diff: p.diff, removed: p.removed, policies: p.policies,
+        errors: p.errors, warnings: p.warnings, counts: p.counts,
+        outputDir: p.outputDir, assetsNote: p.assetsNote,
+      };
+      if (name) {
+        const entry = p.entries.find((x) => x.name === name || x.relOut === name || x.from === name);
+        if (!entry) return fail(new Error(`no preview entry matches "${name}" — try a generated name, output path, or source note path`));
+        return ok({ entry, ...summary });
+      }
+      const entries = p.entries.map((e) => {
+        const { cachedContent: _cached, content: full, ...rest } = e;
+        return content ? { ...rest, content: full } : rest;
+      });
+      return ok({ entries, ...summary });
     } catch (e) { return fail(e); }
   });
 
