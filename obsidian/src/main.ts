@@ -9,6 +9,7 @@ import { buildMcpServer } from "./mcp/server.js";
 import { writeBridge, writeDiscovery, removeDiscovery } from "./mcp/discovery.js";
 import { vaultSlug, socketPath, bridgeDestPath } from "./mcp/paths.js";
 import { findClaudeBinary, claudeIsRegistered, claudeRegister } from "./mcp/claude-cli.js";
+import { PreviewView, PREVIEW_VIEW_TYPE } from "./preview-view.js";
 
 export default class VaultSkillsPlugin extends Plugin {
   declare settings: VaultSkillsSettings;
@@ -31,6 +32,9 @@ export default class VaultSkillsPlugin extends Plugin {
     this.addCommand({ id: "tree", name: "Show tree", callback: () => void cmdTree(this) });
     this.addCommand({ id: "mark", name: "Mark note as skill / agent / policy / command", callback: () => void cmdMark(this) });
     this.addCommand({ id: "release", name: "Export release to repo", callback: () => void cmdRelease(this) });
+
+    this.registerView(PREVIEW_VIEW_TYPE, (leaf) => new PreviewView(leaf, this));
+    this.addCommand({ id: "preview", name: "Preview compiled output", callback: () => void this.activatePreview() });
 
     // Optional: re-export when a skill/agent/policy note changes. The export is debounced
     // so a rename's burst of change events (the file rename plus the cascaded [[wikilink]]
@@ -103,6 +107,15 @@ export default class VaultSkillsPlugin extends Plugin {
     } finally {
       this.exporting = false;
     }
+  }
+
+  private async activatePreview(): Promise<void> {
+    // Reuse an existing preview leaf; otherwise open one in the main pane (the compiled
+    // corpus is full-width content, not sidebar content).
+    const existing = this.app.workspace.getLeavesOfType(PREVIEW_VIEW_TYPE);
+    const leaf = existing[0] ?? this.app.workspace.getLeaf(true);
+    await leaf.setViewState({ type: PREVIEW_VIEW_TYPE, active: true });
+    this.app.workspace.revealLeaf(leaf);
   }
 
   private async startServer(): Promise<void> {
