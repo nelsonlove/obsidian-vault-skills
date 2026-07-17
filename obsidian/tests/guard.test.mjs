@@ -27,6 +27,16 @@ test("guards: territory + hard policy (own or ancestor) → guard; soft-only or 
   assert.deepEqual(guards[0].hardPolicies, [{ title: "hp", path: "hp.md" }], "ancestor hard policy included");
 });
 
+test("territory on a root or crosscutting agent warns and produces no guard", () => {
+  const { guards, warnings } = transformAll([
+    note("root.md", { type: "agent", name: "vault", root: true, territory: ["**"] }),
+    note("cc.md", { type: "agent", name: "cc", crosscutting: true, territory: ["x/**"] }, ["root.md"]),
+    note("hp.md", { type: "policy", severity: "hard" }, [], "H"),
+  ], OPTS);
+  assert.equal(guards.length, 0);
+  assert.equal(warnings.filter((w) => /territory on a (root|crosscutting) agent is ignored/.test(w)).length, 2);
+});
+
 test("buildHooksJson: base skill-runs hook always present; PreToolUse doorman only with guards", () => {
   const plain = JSON.parse(buildHooksJson(false));
   assert.ok(plain.hooks.PostToolUse, "base hook kept");

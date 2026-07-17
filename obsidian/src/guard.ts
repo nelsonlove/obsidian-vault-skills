@@ -60,12 +60,16 @@ if not vault or not guards:
 
 tool = data.get("tool_name", "")
 ti = data.get("tool_input") or {}
-sid = str(data.get("session_id") or os.getppid())
+# No session_id ⇒ empty key: the marker degrades to once-per-tmpdir-per-scope, which still
+# delivers the pointer at least once. (A PID fallback would collide when PIDs recycle.)
+sid = str(data.get("session_id") or "")
 
 def vault_rel(p):
+    # realpath both sides: the manifest's vault path and the hook's file_path may disagree
+    # on symlinks, and abspath alone would silently miss the territory.
     if not p:
         return None
-    p, v = os.path.abspath(p), os.path.abspath(vault)
+    p, v = os.path.realpath(p), os.path.realpath(vault)
     return os.path.relpath(p, v) if p == v or p.startswith(v + os.sep) else None
 
 hits = []

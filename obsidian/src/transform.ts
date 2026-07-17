@@ -490,7 +490,11 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
   // ---- territory guards: scopes that declared territory AND carry hard policies ----
   const guards: Guard[] = [];
   for (const a of nodes) {
-    if (!a.valid || a.kind !== "agent" || a.crosscutting || a.isRoot || !a.territory?.length) continue;
+    if (!a.valid || a.kind !== "agent" || !a.territory?.length) continue;
+    if (a.crosscutting || a.isRoot) {
+      warnings.push(`${a.path}: territory on a ${a.isRoot ? "root" : "crosscutting"} agent is ignored — territory belongs on a scope agent`);
+      continue;
+    }
     // Hard policies binding in this territory: attached to the scope or any ancestor below
     // the root (root-attached policies are global — already in every agent's compile).
     const chain: Node[] = [];
