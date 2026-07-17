@@ -30,6 +30,10 @@ export interface Generated {
   relOut: string;
   content: string;
   from: string;
+  /** Generated (deduped) name — the Claude Code listing name. Absent on static files. */
+  name?: string;
+  /** The listing description exactly as emitted (breadcrumbed for tree nodes). */
+  description?: string;
 }
 
 export interface TransformOptions {
@@ -49,11 +53,21 @@ export interface TreeNode {
   crosscutting: boolean;   // horizontal slot agent (fanned into scope agents' routing)
 }
 
+/** Where a policy note's body actually landed: the agents whose compiled files include it
+ *  (lineage injection, plus `severity: hard` inlining into crosscutting agents). */
+export interface PolicyPlacement {
+  path: string;
+  title: string;
+  hard: boolean;
+  agents: string[];
+}
+
 export interface TransformResult {
   generated: Generated[];
   warnings: string[];
   errors: string[];
   tree: TreeNode[];
+  policies: PolicyPlacement[];
 }
 
 interface Node {
@@ -344,7 +358,11 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     for (let cur: Node | null = n; cur; cur = cur.parent) chain.unshift(cur);
     return chain.flatMap((node) => policiesByNode.get(node.path) ?? []);
   };
-  const applicablePolicies = (n: Node): string[] => applicablePolicyObjs(n).map((p) => p.body);
+  // Placement record for the preview: policy path → agent genNames its body landed in.
+  const policyAgents = new Map<string, Set<string>>();
+  const placePolicy = (polPath: string, agent: string): void => {
+    (policyAgents.get(polPath) ?? policyAgents.set(polPath, new Set()).get(polPath)!).add(agent);
+  };
 
   // ---- phase 6: names (dedup) ----
   const used = new Set<string>();
@@ -385,6 +403,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     if (n.kind === "skill") {
       const fmOut = toYaml({ name: n.genName, description: describe(n), version: n.version, ...n.extra });
       generated.push({ kind: "skill", relOut: `skills/${n.genName}/SKILL.md`, from: n.path,
+        name: n.genName, description: describe(n),
         content: `${fmOut}\n\n${provenanceFor(n.path)}\n\n${n.body}\n` });
       continue;
     }
@@ -402,7 +421,9 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     if (opts.vaultPath) {
       bodyOut += `\n\n## Vault access\n\nYour skills and agents are authored in the Obsidian vault at \`${opts.vaultPath}\`. You can read and write notes there directly (Read/Grep/Glob and Write/Edit under that path), or use the \`vault-mcp\` tools if connected.`;
     }
-    const policyBodies = applicablePolicies(n);
+    const policyObjs = applicablePolicyObjs(n);
+    for (const p of policyObjs) placePolicy(p.path, n.genName);
+    const policyBodies = policyObjs.map((p) => p.body);
     if (policyBodies.length) {
       bodyOut += `\n\n${policyBodies.join("\n\n")}`;
     }
@@ -446,12 +467,14 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
         const blocks = hardInline
           .filter((h) => !seen.has(h.pol.path) && seen.add(h.pol.path))
           .map((h) => `**Hard policy — binds when working in ${h.scope}:**\n\n${h.pol.body}`);
+        for (const h of hardInline) placePolicy(h.pol.path, n.genName);
         if (blocks.length) bodyOut += `\n\n${blocks.join("\n\n")}`;
       }
     }
 
     const src = n.path === SYNTH_ROOT_PATH ? "(synthesized root)" : n.path;
     generated.push({ kind: "agent", relOut: `agents/${n.genName}.md`, from: src,
+      name: n.genName, description: describe(n),
       content: `${fmOut}\n\n${provenanceFor(src)}\n\n${bodyOut}\n` });
   }
 
@@ -462,6 +485,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     // command has no scope in the tree. Body is the prompt template ($ARGUMENTS, !bash, @file).
     const fmOut = toYaml({ description: c.rawDesc, ...c.extra });
     generated.push({ kind: "command", relOut: `commands/${c.genName}.md`, from: c.path,
+      name: c.genName, description: c.rawDesc,
       content: `${fmOut}\n\n${provenanceFor(c.path)}\n\n${c.body}\n` });
   }
 
@@ -475,5 +499,11 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     crosscutting: n.crosscutting,
   }));
 
-  return { generated, warnings, errors, tree };
+  // Placements only for policies that resolved to a valid agent (errored ones never landed).
+  const resolvedPolicies = new Set([...policiesByNode.values()].flat());
+  const policyPlacements: PolicyPlacement[] = policies
+    .filter((p) => resolvedPolicies.has(p))
+    .map((p) => ({ path: p.path, title: p.title, hard: p.hard, agents: [...(policyAgents.get(p.path) ?? [])] }));
+
+  return { generated, warnings, errors, tree, policies: policyPlacements };
 }
