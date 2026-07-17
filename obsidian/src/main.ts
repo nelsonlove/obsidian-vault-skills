@@ -102,6 +102,9 @@ export default class VaultSkillsPlugin extends Plugin {
           `\nRun /reload-plugins in Claude Code to load.`,
         quiet ? 4000 : summary.errors.length ? 12000 : 8000,
       );
+      // Let open preview views re-diff against the fresh output (they show stale
+      // statuses otherwise — the output dir emits no vault events).
+      this.app.workspace.trigger("vault-skills:exported");
     } catch (e) {
       new Notice(`Vault Skills: export failed — ${e instanceof Error ? e.message : String(e)}`, 10000);
     } finally {

@@ -89,6 +89,22 @@ test("dropped note: its file shows as removed; manifest asset entries do not", a
   assert.equal(p.diff.removed, 1);
 });
 
+test("retired static file in the manifest is reported as removed; assets stay excluded", async () => {
+  const dir = tmpdir();
+  await runExport(mockApp(SAMPLE), OPTS(dir));
+  // A previous plugin version exported a static hook file + a bundled asset; neither is
+  // regenerated now (STATIC_FILES is empty under tsx). The export would delete both, but
+  // only the static one is predictable — the asset might be re-collected.
+  const manifestPath = path.join(dir, ".vault-skills-manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.files.push("hooks/hooks.json", "skills/deadline-sweep/helper.py");
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+
+  const p = await previewVault(mockApp(SAMPLE), OPTS(dir));
+  assert.ok(p.removed.includes("hooks/hooks.json"), "retired static reported as removed");
+  assert.ok(!p.removed.includes("skills/deadline-sweep/helper.py"), "asset excluded from removal");
+});
+
 test("entries carry the Claude Code listing line (name + description)", async () => {
   const p = await previewVault(mockApp(SAMPLE), OPTS(tmpdir()));
   const grants = p.entries.find((e) => e.relOut === "agents/grants.md");

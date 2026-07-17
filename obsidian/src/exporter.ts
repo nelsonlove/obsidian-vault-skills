@@ -1,7 +1,7 @@
 import type { App } from "obsidian";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { transformAll, SKILL_PASSTHROUGH_FIELDS, type EmittedKind, type NoteInput, type PolicyPlacement, type TreeNode } from "./transform.js";
+import { transformAll, SKILL_PASSTHROUGH_FIELDS, type EmittedKind, type Generated, type NoteInput, type PolicyPlacement, type TreeNode } from "./transform.js";
 import { resolveTransclusions, stripFrontmatter, type EmbedLookup } from "./transclude.js";
 import { STATIC_FILES } from "./static-skills.js";
 import { assetDirFor, collectAssets, copyAsset, type CollectAssetsOptions } from "./assets.js";
@@ -182,20 +182,13 @@ export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIEL
 }
 
 export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
-  const collectWarnings: string[] = [];
-  const notes = await collectNotes(app, opts.fields ?? DEFAULT_FIELDS, collectWarnings);
-  // FileSystemAdapter exposes getBasePath(); duck-type it to keep `obsidian` type-only.
-  const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
-  const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
-  const { generated, warnings, errors } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
-  warnings.unshift(...collectWarnings);
+  const { generated, warnings, errors, vaultPath } = await collectAndTransform(app, opts.fields ?? DEFAULT_FIELDS, opts.pluginName);
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription, opts.version);
 
   // Overwrite: remove previously-generated files (tracked in the manifest), then write.
   const manifestPath = path.join(opts.outputDir, MANIFEST_NAME);
-  let prev: string[] = [];
-  try { prev = JSON.parse(fs.readFileSync(manifestPath, "utf8")).files ?? []; } catch { /* no prior manifest */ }
+  const prev = readManifestFiles(opts.outputDir);
 
   // Emit generated content plus the shipped static skills (static wins on name collision),
   // so one export yields the complete plugin at the output dir — no separate symlink.
@@ -285,22 +278,46 @@ export interface Analysis {
   counts: { skills: number; agents: number; policies: number; commands: number };
 }
 
-/** Shared read-only core for `validate` and `tree`: collect + transform, no write. */
-export async function analyzeVault(app: App, fields: DetectConfig = DEFAULT_FIELDS, pluginName = "vault-skills"): Promise<Analysis> {
+/** Collected notes + transform result: the shared prologue for export, analyze, and preview,
+ *  so the three surfaces can never disagree about the same vault. */
+interface Compiled {
+  notes: NoteInput[];
+  vaultPath: string | undefined;
+  generated: Generated[];
+  tree: TreeNode[];
+  policies: PolicyPlacement[];
+  warnings: string[];
+  errors: string[];
+}
+
+async function collectAndTransform(app: App, fields: DetectConfig, pluginName: string): Promise<Compiled> {
   const collectWarnings: string[] = [];
   const notes = await collectNotes(app, fields, collectWarnings);
+  // FileSystemAdapter exposes getBasePath(); duck-type it to keep `obsidian` type-only.
   const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
   const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
-  const { tree, warnings, errors } = transformAll(notes, { pluginName, synthesizeRoot: true, vaultPath });
+  const result = transformAll(notes, { pluginName, synthesizeRoot: true, vaultPath });
+  result.warnings.unshift(...collectWarnings);
+  return { notes, vaultPath, ...result };
+}
+
+function countsOf(tree: TreeNode[], notes: NoteInput[]): Analysis["counts"] {
   return {
-    tree, errors, warnings: [...collectWarnings, ...warnings],
-    counts: {
-      agents: tree.filter((n) => n.kind === "agent").length,
-      skills: tree.filter((n) => n.kind === "skill").length,
-      policies: notes.filter((n) => n.frontmatter.type === "policy").length,
-      commands: notes.filter((n) => n.frontmatter.type === "command").length,
-    },
+    agents: tree.filter((n) => n.kind === "agent").length,
+    skills: tree.filter((n) => n.kind === "skill").length,
+    policies: notes.filter((n) => n.frontmatter.type === "policy").length,
+    commands: notes.filter((n) => n.frontmatter.type === "command").length,
   };
+}
+
+function readManifestFiles(outputDir: string): string[] {
+  try { return JSON.parse(fs.readFileSync(path.join(outputDir, MANIFEST_NAME), "utf8")).files ?? []; } catch { return []; }
+}
+
+/** Shared read-only core for `validate` and `tree`: collect + transform, no write. */
+export async function analyzeVault(app: App, fields: DetectConfig = DEFAULT_FIELDS, pluginName = "vault-skills"): Promise<Analysis> {
+  const c = await collectAndTransform(app, fields, pluginName);
+  return { tree: c.tree, errors: c.errors, warnings: c.warnings, counts: countsOf(c.tree, c.notes) };
 }
 
 export type PreviewStatus = "added" | "modified" | "unchanged";
@@ -334,8 +351,9 @@ export interface PreviewResult {
   assetsNote: string;
 }
 
-/** relOut shapes the export generates (vs. bundled assets tracked in the same manifest). */
-const GENERATED_SHAPES = [/^skills\/[^/]+\/SKILL\.md$/, /^agents\/[^/]+\.md$/, /^commands\/[^/]+\.md$/];
+/** Bundled skill assets live inside a skill's dir alongside its generated SKILL.md — the one
+ *  manifest-tracked family the preview can't predict without collecting assets. */
+const isAssetPath = (p: string): boolean => p.startsWith("skills/") && !/^skills\/[^/]+\/SKILL\.md$/.test(p);
 
 /** Read-only preview: the exact file set an export would write (same collect + transform +
  *  static merge as {@link runExport}), each entry diffed against the current output dir.
@@ -344,12 +362,7 @@ export async function previewVault(
   app: App,
   opts: { outputDir: string; pluginName: string; fields?: DetectConfig },
 ): Promise<PreviewResult> {
-  const collectWarnings: string[] = [];
-  const notes = await collectNotes(app, opts.fields ?? DEFAULT_FIELDS, collectWarnings);
-  const adapter = app.vault.adapter as { getBasePath?: () => string } | undefined;
-  const vaultPath = typeof adapter?.getBasePath === "function" ? adapter.getBasePath() : undefined;
-  const { generated, tree, warnings, errors, policies } = transformAll(notes, { pluginName: opts.pluginName, synthesizeRoot: true, vaultPath });
-  warnings.unshift(...collectWarnings);
+  const { notes, generated, tree, warnings, errors, policies } = await collectAndTransform(app, opts.fields ?? DEFAULT_FIELDS, opts.pluginName);
 
   // Mirror runExport's merge (static wins on relOut collision), so preview and export
   // always describe the same file set.
@@ -359,24 +372,23 @@ export async function previewVault(
     ...STATIC_FILES.map((s) => ({ kind: s.kind as EmittedKind | "hook", relOut: s.relOut, content: s.content, from: "(static)", name: undefined, description: undefined })),
   ];
 
-  const entries: PreviewEntry[] = files.map((g) => {
+  const entries: PreviewEntry[] = await Promise.all(files.map(async (g) => {
     let cached: string | null = null;
-    try { cached = fs.readFileSync(path.join(opts.outputDir, g.relOut), "utf8"); } catch { /* not exported yet */ }
+    try { cached = await fs.promises.readFile(path.join(opts.outputDir, g.relOut), "utf8"); } catch { /* not exported yet */ }
     const status: PreviewStatus = cached == null ? "added" : cached === g.content ? "unchanged" : "modified";
     return {
       kind: g.kind, relOut: g.relOut, from: g.from, name: g.name, description: g.description,
       content: g.content, bytes: Buffer.byteLength(g.content), status,
       ...(status === "modified" ? { cachedContent: cached as string } : {}),
     };
-  });
+  }));
 
-  // Removal mirror: manifest entries the export would no longer write. Only generated-shaped
-  // paths participate; the rest are bundled assets (see assetsNote).
-  let prev: string[] = [];
-  try { prev = JSON.parse(fs.readFileSync(path.join(opts.outputDir, MANIFEST_NAME), "utf8")).files ?? []; } catch { /* no prior manifest */ }
+  // Removal mirror of runExport's stale-cleanup: every manifest entry the export would no
+  // longer write — including retired static files — except bundled assets, which the preview
+  // can't predict (see assetsNote) and therefore never reports.
+  const prev = readManifestFiles(opts.outputDir);
   const next = new Set(entries.map((e) => e.relOut));
-  const removed = prev.filter((p) =>
-    !next.has(p) && (GENERATED_SHAPES.some((re) => re.test(p)) || staticRelOuts.has(p)));
+  const removed = prev.filter((p) => !next.has(p) && !isAssetPath(p));
 
   return {
     tree, entries, removed,
@@ -387,12 +399,7 @@ export async function previewVault(
       removed: removed.length,
     },
     policies, errors, warnings,
-    counts: {
-      agents: tree.filter((n) => n.kind === "agent").length,
-      skills: tree.filter((n) => n.kind === "skill").length,
-      policies: notes.filter((n) => n.frontmatter.type === "policy").length,
-      commands: notes.filter((n) => n.frontmatter.type === "command").length,
-    },
+    counts: countsOf(tree, notes),
     outputDir: opts.outputDir,
     assetsNote: "bundled skill assets are not previewed",
   };

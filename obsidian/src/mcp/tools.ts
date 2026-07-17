@@ -86,6 +86,7 @@ export function registerTools(server: McpServer, ctx: ServerCtx): void {
         outputDir: expandTilde(s.outputDir), pluginName: s.pluginName, fields: fieldsOf(s),
         assetsRoot: expandTilde(s.assetsRoot),
       });
+      app.workspace.trigger("vault-skills:exported"); // refresh any open preview view
       return ok({
         skills: summary.skills, agents: summary.agents, commands: summary.commands,
         assets: summary.assets, removed: summary.removed,

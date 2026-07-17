@@ -5,6 +5,12 @@
 // as Claude Code sees it — the listing line (name + description), the full compiled file,
 // and, when modified, the currently exported version side by side. Always a fresh
 // `previewVault` render; no persisted state. See docs/preview-design.md.
+//
+// Refresh triggers: manual button; relevant vault events (note changed/deleted/renamed —
+// "relevant" = exportable now, or a source of the last render, so deletions and de-typed
+// notes count); and the "vault-skills:exported" workspace event fired after every export,
+// since writing the output dir emits no vault events. A hidden leaf marks itself dirty
+// instead of re-running the pipeline, and re-renders on reveal.
 
 import { ItemView, type WorkspaceLeaf, type TFile } from "obsidian";
 import type VaultSkillsPlugin from "./main.js";
@@ -15,13 +21,13 @@ import { debounce, handleNoteChanged, type Debounced } from "./export-trigger.js
 
 export const PREVIEW_VIEW_TYPE = "vault-skills-preview";
 
-const BADGE: Record<string, string> = { added: "+", modified: "±", unchanged: "·", removed: "✕" };
-const BADGE_COLOR: Record<string, string> = {
-  added: "var(--color-green)",
-  modified: "var(--color-orange)",
-  unchanged: "var(--text-faint)",
-  removed: "var(--color-red)",
+const STATUS_BADGE: Record<string, { text: string; color: string }> = {
+  added: { text: "+", color: "var(--color-green)" },
+  modified: { text: "±", color: "var(--color-orange)" },
+  unchanged: { text: "·", color: "var(--text-faint)" },
+  removed: { text: "✕", color: "var(--color-red)" },
 };
+const POLICY_BADGE = { hard: { text: "‼", color: "var(--color-red)" }, soft: { text: "§", color: "var(--text-muted)" } };
 
 type Tab = "listing" | "compiled" | "diff";
 
@@ -31,6 +37,10 @@ export class PreviewView extends ItemView {
   private selected: string | null = null; // entry relOut, "policy:<path>", or "removed:<relOut>"
   private tab: Tab = "listing";
   private refreshDebounced: Debounced | null = null;
+  private dirty = false;
+  private sources = new Set<string>(); // vault paths the last render was compiled from
+  private navLines = new Map<string, HTMLElement>();
+  private detailEl: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: VaultSkillsPlugin) {
     super(leaf);
@@ -41,19 +51,40 @@ export class PreviewView extends ItemView {
   getIcon(): string { return "eye"; }
 
   async onOpen(): Promise<void> {
-    // Auto-refresh while open: same relevance check as export-on-save, debounced so a
-    // rename's burst of cache events collapses into one re-render of the settled tree.
+    // Debounced so a rename's burst of cache events collapses into one re-render of the
+    // settled tree (same reasoning as export-on-save; see export-trigger.ts).
     this.refreshDebounced = debounce(() => void this.refresh(), 1000);
+
     this.registerEvent(
-      this.app.metadataCache.on("changed", (file) =>
+      this.app.metadataCache.on("changed", (file) => {
+        // Exportable now (new/edited definition) — or a source of the last render, which
+        // catches a note whose kind was just removed and would otherwise fail the check.
+        if (this.sources.has(file.path)) { this.requestRefresh(); return; }
         handleNoteChanged(file, {
           isEnabled: () => true,
           fields: () => fieldsOf(this.plugin.settings),
           getFrontmatter: (f) => this.app.metadataCache.getFileCache(f as TFile)?.frontmatter as Record<string, unknown> | undefined,
-          requestExport: () => this.refreshDebounced?.(),
-        }),
-      ),
+          requestExport: () => this.requestRefresh(),
+        });
+      }),
     );
+    // metadataCache "changed" never fires for deletions or the old path of a rename; the
+    // vault events do. Only sources of the last render are relevant — anything else can't
+    // change the compiled output.
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      if (this.sources.has(file.path)) this.requestRefresh();
+    }));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (this.sources.has(oldPath) || this.sources.has(file.path)) this.requestRefresh();
+    }));
+    // Fired by the plugin after every export (command, export-on-save, MCP) — the output
+    // dir is outside the vault, so nothing else tells us the diff baseline moved.
+    this.registerEvent(this.app.workspace.on("vault-skills:exported" as "quit", () => this.requestRefresh()));
+    // A leaf revealed with a pending dirty flag re-renders now.
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      if (this.dirty && this.containerEl.isShown()) void this.refresh();
+    }));
+
     await this.refresh();
   }
 
@@ -62,7 +93,14 @@ export class PreviewView extends ItemView {
     this.contentEl.empty();
   }
 
+  private requestRefresh(): void {
+    this.refreshDebounced?.();
+  }
+
   private async refresh(): Promise<void> {
+    // Don't burn the pipeline for a leaf nobody can see — re-render on reveal instead.
+    if (!this.containerEl.isShown()) { this.dirty = true; return; }
+    this.dirty = false;
     try {
       const s = this.plugin.settings;
       this.result = await previewVault(this.app, {
@@ -71,7 +109,10 @@ export class PreviewView extends ItemView {
         fields: fieldsOf(s),
       });
       this.error = null;
-      // Keep the selection when the entry still exists; else clear it.
+      this.sources = new Set([
+        ...this.result.entries.map((e) => e.from).filter((f) => !f.startsWith("(")),
+        ...this.result.policies.map((p) => p.path),
+      ]);
       if (this.selected && !this.selectionExists(this.selected)) this.selected = null;
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
@@ -87,9 +128,12 @@ export class PreviewView extends ItemView {
     return r.entries.some((e) => e.relOut === sel);
   }
 
+  /** Full rebuild — only on refresh. Selection/tab changes re-render the detail pane only,
+   *  so the nav keeps its DOM and scroll position. */
   private render(): void {
     const root = this.contentEl;
     root.empty();
+    this.navLines.clear();
     root.style.display = "flex";
     root.style.flexDirection = "column";
     root.style.height = "100%";
@@ -113,11 +157,11 @@ export class PreviewView extends ItemView {
     body.style.cssText = "display: flex; flex: 1; min-height: 0; gap: 8px;";
     const nav = body.createDiv();
     nav.style.cssText = "width: 280px; overflow-y: auto; border-right: 1px solid var(--background-modifier-border); padding-right: 8px; flex-shrink: 0;";
-    const detail = body.createDiv();
-    detail.style.cssText = "flex: 1; overflow-y: auto; min-width: 0;";
+    this.detailEl = body.createDiv();
+    this.detailEl.style.cssText = "flex: 1; overflow-y: auto; min-width: 0;";
 
     this.renderNav(nav, r);
-    this.renderDetail(detail, r);
+    this.renderDetail(r);
   }
 
   private renderHeader(root: HTMLElement): void {
@@ -135,19 +179,27 @@ export class PreviewView extends ItemView {
     }
   }
 
-  private navLine(parent: HTMLElement, opts: { sel: string; badge: string; label: string; depth: number; muted?: boolean }): void {
+  private select(sel: string): void {
+    if (!sel) return;
+    const prev = this.selected;
+    this.selected = sel;
+    this.tab = "listing";
+    if (prev) this.navLines.get(prev)?.style.removeProperty("background");
+    const line = this.navLines.get(sel);
+    if (line) line.style.background = "var(--background-modifier-hover)";
+    if (this.result) this.renderDetail(this.result);
+  }
+
+  private navLine(parent: HTMLElement, opts: { sel: string; badge: { text: string; color: string }; label: string; depth: number; muted?: boolean }): void {
     const line = parent.createDiv();
     line.style.cssText = `padding: 1px 4px 1px ${4 + opts.depth * 14}px; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;`;
     if (this.selected === opts.sel) line.style.background = "var(--background-modifier-hover)";
-    const badge = line.createEl("span", { text: opts.badge + " " });
-    badge.style.color = BADGE_COLOR[Object.entries(BADGE).find(([, v]) => v === opts.badge)?.[0] ?? "unchanged"];
+    const badge = line.createEl("span", { text: opts.badge.text + " " });
+    badge.style.color = opts.badge.color;
     badge.style.fontFamily = "var(--font-monospace)";
     line.createEl("span", { text: opts.label }).style.color = opts.muted ? "var(--text-muted)" : "var(--text-normal)";
-    line.addEventListener("click", () => {
-      this.selected = opts.sel;
-      this.tab = "listing";
-      this.render();
-    });
+    if (opts.sel) this.navLines.set(opts.sel, line);
+    line.addEventListener("click", () => this.select(opts.sel));
   }
 
   private group(nav: HTMLElement, title: string): HTMLElement {
@@ -157,47 +209,58 @@ export class PreviewView extends ItemView {
   }
 
   private renderNav(nav: HTMLElement, r: PreviewResult): void {
-    const byRelOut = new Map(r.entries.map((e) => [e.relOut, e]));
-    const entryFor = (name: string, kind: "agent" | "skill"): PreviewEntry | undefined =>
-      byRelOut.get(kind === "agent" ? `agents/${name}.md` : `skills/${name}/SKILL.md`);
+    // Entries carry the generated name — look up by (kind, name) instead of re-encoding
+    // the output layout (agents/<name>.md, …), which only transform.ts should know.
+    const byNameKind = new Map(r.entries.filter((e) => e.name).map((e) => [`${e.kind}:${e.name}`, e]));
+    const entryFor = (name: string, kind: "agent" | "skill"): PreviewEntry | undefined => byNameKind.get(`${kind}:${name}`);
     const byName = new Map(r.tree.map((n) => [n.name, n]));
+    // Crosscutting agents are deliberately absent from their parent's `children` (they fan
+    // into scope agents as specialists, not vertical lanes) — walk them from `parent` so
+    // they still render in the tree, marked ⤫.
+    const crosscutUnder = (name: string) => r.tree.filter((n) => n.kind === "agent" && n.crosscutting && n.parent === name);
 
     const treeBox = this.group(nav, "Tree");
     const walk = (name: string, depth: number): void => {
       const n = byName.get(name);
       if (!n) return;
       const e = entryFor(n.name, "agent");
-      this.navLine(treeBox, { sel: e?.relOut ?? "", badge: BADGE[e?.status ?? "unchanged"], label: `▸ ${n.name}${n.crosscutting ? " ⤫" : ""}`, depth });
+      this.navLine(treeBox, {
+        sel: e?.relOut ?? "",
+        badge: STATUS_BADGE[e?.status ?? "unchanged"],
+        label: `▸ ${n.name}${n.crosscutting ? " ⤫" : ""}`,
+        depth,
+      });
       for (const s of n.skills) {
         const se = entryFor(s, "skill");
-        this.navLine(treeBox, { sel: se?.relOut ?? "", badge: BADGE[se?.status ?? "unchanged"], label: s, depth: depth + 1, muted: false });
+        this.navLine(treeBox, { sel: se?.relOut ?? "", badge: STATUS_BADGE[se?.status ?? "unchanged"], label: s, depth: depth + 1 });
       }
       for (const c of n.children) walk(c, depth + 1);
+      for (const cc of crosscutUnder(n.name)) walk(cc.name, depth + 1);
     };
     for (const rootNode of r.tree.filter((n) => n.parent === null)) walk(rootNode.name, 0);
 
     const commands = r.entries.filter((e) => e.kind === "command");
     if (commands.length) {
       const box = this.group(nav, "Commands");
-      for (const c of commands) this.navLine(box, { sel: c.relOut, badge: BADGE[c.status], label: `/${c.name ?? c.relOut}`, depth: 0 });
+      for (const c of commands) this.navLine(box, { sel: c.relOut, badge: STATUS_BADGE[c.status], label: `/${c.name ?? c.relOut}`, depth: 0 });
     }
 
     if (r.policies.length) {
       const box = this.group(nav, "Policies");
       for (const p of r.policies) {
-        this.navLine(box, { sel: `policy:${p.path}`, badge: p.hard ? "‼" : "§", label: p.title, depth: 0 });
+        this.navLine(box, { sel: `policy:${p.path}`, badge: p.hard ? POLICY_BADGE.hard : POLICY_BADGE.soft, label: p.title, depth: 0 });
       }
     }
 
     const statics = r.entries.filter((e) => e.from === "(static)");
     if (statics.length) {
       const box = this.group(nav, "Static");
-      for (const s of statics) this.navLine(box, { sel: s.relOut, badge: BADGE[s.status], label: s.relOut, depth: 0, muted: true });
+      for (const s of statics) this.navLine(box, { sel: s.relOut, badge: STATUS_BADGE[s.status], label: s.relOut, depth: 0, muted: true });
     }
 
     if (r.removed.length) {
       const box = this.group(nav, "Removed on next export");
-      for (const rel of r.removed) this.navLine(box, { sel: `removed:${rel}`, badge: BADGE.removed, label: rel, depth: 0, muted: true });
+      for (const rel of r.removed) this.navLine(box, { sel: `removed:${rel}`, badge: STATUS_BADGE.removed, label: rel, depth: 0, muted: true });
     }
   }
 
@@ -215,7 +278,10 @@ export class PreviewView extends ItemView {
     });
   }
 
-  private renderDetail(detail: HTMLElement, r: PreviewResult): void {
+  private renderDetail(r: PreviewResult): void {
+    const detail = this.detailEl;
+    if (!detail) return;
+    detail.empty();
     const sel = this.selected;
     if (!sel) {
       detail.createEl("div", { text: "Select a node to preview its compiled output." }).style.color = "var(--text-muted)";
@@ -238,7 +304,11 @@ export class PreviewView extends ItemView {
       for (const a of p.agents) {
         const li = ul.createEl("li");
         const link = li.createEl("a", { text: `agents/${a}.md` });
-        link.addEventListener("click", (ev) => { ev.preventDefault(); this.selected = `agents/${a}.md`; this.tab = "compiled"; this.render(); });
+        link.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          const target = r.entries.find((x) => x.kind === "agent" && x.name === a);
+          if (target) { this.select(target.relOut); this.tab = "compiled"; this.renderDetail(r); }
+        });
       }
       return;
     }
@@ -267,7 +337,7 @@ export class PreviewView extends ItemView {
     for (const t of tabs) {
       const b = bar.createEl("button", { text: t });
       if (t === this.tab) b.style.cssText = "background: var(--interactive-accent); color: var(--text-on-accent);";
-      b.addEventListener("click", () => { this.tab = t; this.render(); });
+      b.addEventListener("click", () => { this.tab = t; this.renderDetail(r); });
     }
 
     if (this.tab === "listing") {

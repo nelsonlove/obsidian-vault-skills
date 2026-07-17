@@ -19,12 +19,13 @@ transclusion resolution, so bodies are the real compiled bodies), returning what
   `cachedContent` included on modified entries). Static files are merged exactly as
   `runExport` merges them (static wins on collision), so preview and export always
   describe the same file set.
-- `removed: string[]` — previously exported files no export would rewrite. Read from the
-  same `.vault-skills-manifest.json` the export uses, considering only generated-shaped
-  paths (`skills/*/SKILL.md`, `agents/*.md`, `commands/*.md`, static relOuts). Everything
-  else in the manifest is a bundled asset: assets are **not previewed** (collecting them
-  can trigger iCloud materialization — a side effect preview must not have) and are
-  excluded from removal detection rather than reported as phantom removals.
+- `removed: string[]` — previously exported files no export would rewrite (the export
+  deletes them). Read from the same `.vault-skills-manifest.json` the export uses. Every
+  stale manifest entry is reported — including static files retired by a plugin update —
+  **except** bundled assets (paths inside a skill dir other than its `SKILL.md`): assets
+  are **not previewed** (collecting them can trigger iCloud materialization — a side
+  effect preview must not have), so their survival is unknowable and they are excluded
+  from removal detection rather than reported as phantom removals.
 - `diff` — added / modified / unchanged / removed counts.
 - `policies: PolicyPlacement[]` — policy note → the agent files its body actually landed
   in (lineage injection + `severity: hard` inlining into crosscutting agents), recorded by
@@ -51,9 +52,14 @@ commands, policies (with where-they-landed), static files, and removed files —
 badged by diff status. Right: the selected entry with tabs — **Listing** (the name +
 description exactly as Claude Code's lists render it, plus a link to the source note),
 **Compiled** (full rendered file, read-only), and **Diff** (current export vs. preview,
-shown as both versions) when modified. Header: refresh button + diff summary. Refresh is
-manual, plus debounced auto-refresh on relevant note changes (same relevance check as
-export-on-save) while the view is open. No persisted state — the view is always a fresh
+shown as both versions) when modified. Crosscutting agents render in the tree under their
+parent (marked ⤫) even though the transform excludes them from `children`. Header:
+refresh button + diff summary. Refresh is manual, plus debounced auto-refresh on relevant
+vault events while the view is open — a note that is exportable now *or was a source of
+the last render* (so deletions, renames, and de-typed notes count), and the
+`vault-skills:exported` workspace event fired after every export (the output dir emits no
+vault events, so the diff baseline would otherwise go stale). A hidden leaf skips the
+pipeline and re-renders on reveal. No persisted state — the view is always a fresh
 `previewVault` render.
 
 ## Testing
