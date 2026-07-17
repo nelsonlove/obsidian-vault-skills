@@ -202,7 +202,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   const staticRelOuts = new Set(STATIC_FILES.map((s) => s.relOut));
   const files = [
     ...generated.filter((g) => !staticRelOuts.has(g.relOut)),
-    ...STATIC_FILES.map((s) => ({ kind: "skill" as const, relOut: s.relOut, content: s.content, from: "(static)" })),
+    ...STATIC_FILES.map((s) => ({ kind: s.kind, relOut: s.relOut, content: s.content, from: "(static)" })),
   ];
 
   // Supporting files: each skill note may have a parallel folder of assets (scripts,
