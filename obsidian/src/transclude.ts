@@ -22,6 +22,17 @@ export const MAX_EMBED_DEPTH = 5;
 
 const EMBED_RE = /!\[\[([^\[\]]+?)\]\]/g;
 
+/** HTML comments terminate at the first `-->`, so a heading/path containing one would
+ *  close the marker early and leak the rest as prose; soften just that sequence. */
+const safeLabel = (s: string): string => s.replace(/-->/g, "--›");
+
+/** Provenance marker builders — single source of truth for the marker format, shared with
+ *  the transform's agent-facing prose and the tests. Markers state where inlined text came
+ *  FROM; they do not promise every embed inside it also resolved (unresolved inner embeds
+ *  are left raw and warned). */
+export const transclusionOpen = (label: string): string => `<!-- transcluded from: ${safeLabel(label)} -->`;
+export const transclusionClose = (label: string): string => `<!-- end transclusion: ${safeLabel(label)} -->`;
+
 /** Strip a single leading YAML frontmatter block. (Shared with exporter.ts.) */
 export function stripFrontmatter(content: string): string {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "");
@@ -111,6 +122,9 @@ interface ResolveContext {
   warnings: string[];
   /** Active embed chain, for cycle detection (paths, source-note first). */
   chain: string[];
+  /** When present, collects the vault path of every note whose content was inlined
+   *  (all depths) — the compiled artifact's transclusion sources. */
+  sources?: Set<string>;
 }
 
 async function resolveBody(body: string, fromPath: string, ctx: ResolveContext): Promise<string> {
@@ -159,21 +173,42 @@ async function resolveBody(body: string, fromPath: string, ctx: ResolveContext):
       }
     }
     const resolved = await resolveBody(content, src.path, { ...ctx, chain: [...ctx.chain, src.path] });
-    out.push(resolved);
+    // Provenance markers: compiled artifacts leave the vault, and without these the
+    // inlined text is indistinguishable from the host note's own prose — an agent
+    // editing its definition couldn't tell which note owns the passage (and might
+    // paste compiled text back into the host note, flattening the composition).
+    // Block-context embeds (alone on their line) get newline-separated markers; embeds
+    // inside a line (list items, table cells, mid-sentence block refs) get markers with
+    // no added newlines, so the surrounding markdown structure survives exactly as the
+    // pre-marker splice did.
+    ctx.sources?.add(src.path);
+    const label = section ? `${src.path}#${section}` : src.path;
+    const lineStart = body.lastIndexOf("\n", idx - 1) + 1;
+    const nextNl = body.indexOf("\n", idx + m[0].length);
+    const lineEnd = nextNl === -1 ? body.length : nextNl;
+    const blockContext =
+      /^\s*$/.test(body.slice(lineStart, idx)) && /^\s*$/.test(body.slice(idx + m[0].length, lineEnd));
+    out.push(blockContext
+      ? `${transclusionOpen(label)}\n${resolved}\n${transclusionClose(label)}`
+      : `${transclusionOpen(label)}${resolved}${transclusionClose(label)}`);
   }
   out.push(body.slice(last));
   return out.join("");
 }
 
-/** Inline every `![[X]]` / `![[X#Heading]]` / `![[X#^block]]` embed in `body`.
+/** Inline every `![[X]]` / `![[X#Heading]]` / `![[X#^block]]` embed in `body`, wrapping
+ *  each inlined block in `<!-- transcluded from: … -->` / `<!-- end transclusion: … -->`
+ *  markers so the compiled artifact names the note that owns the passage.
  *  Unresolvable embeds (missing target/section, cycle, depth, attachments, code spans)
- *  are left in place; problems are appended to `warnings`. */
+ *  are left in place; problems are appended to `warnings`. When `sources` is given, the
+ *  vault paths of every inlined note (all depths) are collected into it. */
 export async function resolveTransclusions(
   body: string,
   sourcePath: string,
   lookup: EmbedLookup,
   warnings: string[],
+  sources?: Set<string>,
 ): Promise<string> {
   if (!body.includes("![[")) return body;
-  return resolveBody(body, sourcePath, { lookup, warnings, chain: [sourcePath] });
+  return resolveBody(body, sourcePath, { lookup, warnings, chain: [sourcePath], sources });
 }

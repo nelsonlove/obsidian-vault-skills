@@ -17,6 +17,9 @@ export default class VaultSkillsPlugin extends Plugin {
   private requestExport: Debounced | null = null;
   private listener: UnixSocketListener | null = null;
   private slug = "";
+  /** Transcluded-note paths from the last export — plain notes whose edits must also
+   *  re-trigger export-on-save (their text is inlined into the compiled output). */
+  private exportSources = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -58,6 +61,7 @@ export default class VaultSkillsPlugin extends Plugin {
           fields: () => fieldsOf(this.settings),
           getFrontmatter: (f) => this.app.metadataCache.getFileCache(f as TFile)?.frontmatter as Record<string, unknown> | undefined,
           requestExport: () => this.requestExport?.(),
+          isSource: (p) => this.exportSources.has(p),
         }),
       ),
     );
@@ -87,6 +91,7 @@ export default class VaultSkillsPlugin extends Plugin {
         fields: fieldsOf(this.settings),
         assetsRoot: expandTilde(this.settings.assetsRoot),
       });
+      this.exportSources = new Set(summary.sources);
 
       const issue = (label: string, items: string[]) =>
         items.length ? `\n${items.length} ${label}: ${items[0]}${items.length > 1 ? " …" : ""}` : "";

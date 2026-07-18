@@ -141,6 +141,49 @@ test("hard policy is placed into crosscutting agents that inline it", () => {
   assert.ok(pol.agents.includes("sweeper"), "hard inline into the crosscutting agent");
 });
 
+test("preview entries carry transclusion sources; compiled content is marked", async () => {
+  const notes = [
+    ...SAMPLE,
+    { path: "shared.md", frontmatter: { title: "plain" }, content: "Shared conventions text." },
+  ].map((n) => (n.path === "sweep.md"
+    ? { ...n, content: "---\ntype: skill\n---\n\nSweep.\n\n![[shared]]" }
+    : n));
+  const p = await previewVault(mockApp(notes), OPTS(tmpdir()));
+  const sweep = p.entries.find((e) => e.relOut === "skills/deadline-sweep/SKILL.md");
+  assert.deepEqual(sweep.sources, ["shared.md"], "transcluded note reported as a source");
+  assert.match(sweep.content, /<!-- transcluded from: shared\.md -->\nShared conventions text\.\n<!-- end transclusion: shared\.md -->/);
+  const grants = p.entries.find((e) => e.relOut === "agents/grants.md");
+  assert.equal(grants.sources, undefined, "no sources field without transclusions");
+  assert.match(grants.content, /<!-- policy: pol\.md -->\nGrants policy body\./, "injected policy names its source note");
+});
+
+test("transclusions inside injected policy bodies reach the agent's sources", () => {
+  const notes = [
+    { path: "root.md", frontmatter: { type: "agent", name: "vault", root: true }, parentPaths: [], body: "Root." },
+    { path: "grants.md", frontmatter: { type: "agent", name: "grants" }, parentPaths: ["root.md"], body: "Grants." },
+    { path: "pol.md", frontmatter: { type: "policy" }, parentPaths: ["grants.md"], body: "Policy with inlined text.", sources: ["shared.md"] },
+  ];
+  const r = transformAll(notes, { pluginName: "vault-skills" });
+  const grants = r.generated.find((g) => g.relOut === "agents/grants.md");
+  assert.deepEqual(grants.sources, ["shared.md"], "policy-body transclusion attributed to the agent file");
+  const root = r.generated.find((g) => g.relOut === "agents/vault.md");
+  assert.equal(root.sources, undefined, "agent without transclusions or policy embeds carries none");
+});
+
+test("Vault access assembly sentence appears only for assembled agents", () => {
+  const notes = [
+    { path: "root.md", frontmatter: { type: "agent", name: "vault", root: true }, parentPaths: [], body: "Root." },
+    { path: "plain.md", frontmatter: { type: "agent", name: "plain" }, parentPaths: ["root.md"], body: "Plain." },
+    { path: "pol.md", frontmatter: { type: "policy" }, parentPaths: ["root.md"], body: "Global policy." },
+  ];
+  const withPolicy = transformAll(notes, { pluginName: "vault-skills", vaultPath: "/v" });
+  assert.match(withPolicy.generated.find((g) => g.relOut === "agents/plain.md").content, /assembled from multiple notes/);
+  const bare = transformAll(notes.filter((n) => n.path !== "pol.md"), { pluginName: "vault-skills", vaultPath: "/v" });
+  const plain = bare.generated.find((g) => g.relOut === "agents/plain.md");
+  assert.match(plain.content, /## Vault access/);
+  assert.ok(!/assembled from multiple notes/.test(plain.content), "no assembly claim without marked blocks");
+});
+
 test("unresolved policy gets no placement entry", () => {
   const notes = [
     { path: "root.md", frontmatter: { type: "agent", name: "vault", root: true }, parentPaths: [], body: "Root." },

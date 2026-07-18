@@ -100,6 +100,10 @@ export interface ExportSummary {
   warnings: string[];
   errors: string[];
   outputDir: string;
+  /** Vault paths of every note transcluded into the exported output — the extra notes
+   *  (beyond typed skill/agent/policy/command notes) whose edits should re-trigger an
+   *  export-on-save (see main.ts). */
+  sources: string[];
 }
 
 /** Extract link targets from a frontmatter `parent` value (string or list). */
@@ -155,7 +159,7 @@ function embedLookup(app: App): EmbedLookup {
 export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIELDS, warnings?: string[]): Promise<NoteInput[]> {
   const notes: NoteInput[] = [];
   const resolve = warnings
-    ? (body: string, from: string) => resolveTransclusions(body, from, embedLookup(app), warnings)
+    ? (body: string, from: string, sources: Set<string>) => resolveTransclusions(body, from, embedLookup(app), warnings, sources)
     : null;
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
@@ -169,7 +173,8 @@ export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIEL
     if (!kind) continue;
     const raw = await app.vault.cachedRead(file);
     let body = stripFrontmatter(raw);
-    if (resolve) body = await resolve(body, file.path);
+    const sources = new Set<string>();
+    if (resolve) body = await resolve(body, file.path, sources);
     notes.push({
       // Copy the view (never mutate: in nested mode `view` is Obsidian's live cache object) and
       // normalize the kind into `type` so the transform + policy count read one source of truth.
@@ -177,6 +182,7 @@ export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIEL
       path: file.path,
       body,
       parentPaths: resolveParents(app, file.path, parent),
+      sources: [...sources],
     });
   }
   return notes;
@@ -264,6 +270,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     warnings,
     errors,
     outputDir: opts.outputDir,
+    sources: [...new Set(generated.flatMap((g) => g.sources ?? []))],
   };
 }
 
@@ -351,6 +358,9 @@ export interface PreviewEntry {
   kind: EmittedKind | "hook";
   relOut: string;
   from: string;
+  /** Vault paths of notes transcluded into the source note's body — the other notes an
+   *  edit to this compiled file's content might actually belong to. */
+  sources?: string[];
   name?: string;
   description?: string;
   content: string;
@@ -397,6 +407,7 @@ export async function previewVault(
     const status: PreviewStatus = cached == null ? "added" : cached === g.content ? "unchanged" : "modified";
     return {
       kind: g.kind, relOut: g.relOut, from: g.from, name: g.name, description: g.description,
+      ...(g.sources?.length ? { sources: g.sources } : {}),
       content: g.content, bytes: Buffer.byteLength(g.content), status,
       ...(status === "modified" ? { cachedContent: cached as string } : {}),
     };
