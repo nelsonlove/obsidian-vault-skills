@@ -23,6 +23,9 @@ export interface NoteInput {
   body: string;
   /** Resolved parent note path(s). 0 ⇒ child of root; 1 ⇒ that parent; >1 ⇒ error. */
   parentPaths: string[];
+  /** Vault paths of notes transcluded (inlined) into `body`, all depths — provenance for
+   *  the compiled artifact. Populated by the collector; the transform passes it through. */
+  sources?: string[];
 }
 
 export interface Generated {
@@ -431,13 +434,15 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
 
     let bodyOut = n.body;
     if (opts.vaultPath) {
-      bodyOut += `\n\n## Vault access\n\nYour skills and agents are authored in the Obsidian vault at \`${opts.vaultPath}\`. You can read and write notes there directly (Read/Grep/Glob and Write/Edit under that path), or use the \`vault-mcp\` tools if connected.`;
+      bodyOut += `\n\n## Vault access\n\nYour skills and agents are authored in the Obsidian vault at \`${opts.vaultPath}\`. You can read and write notes there directly (Read/Grep/Glob and Write/Edit under that path), or use the \`vault-mcp\` tools if connected. This definition is assembled from multiple notes — transcluded and policy blocks are marked with their source paths (\`<!-- transcluded from: … -->\`, \`<!-- policy: … -->\`); to change one, edit that note and re-export, never the compiled file.`;
     }
     const policyObjs = applicablePolicyObjs(n);
     for (const p of policyObjs) placePolicy(p.path, n.genName);
-    const policyBodies = policyObjs.map((p) => p.body);
-    if (policyBodies.length) {
-      bodyOut += `\n\n${policyBodies.join("\n\n")}`;
+    // Each injected policy names its source note, so an agent reading its own compiled
+    // definition knows which note owns the text (see the Vault access paragraph above).
+    const policyBlocks = policyObjs.map((p) => `<!-- policy: ${p.path} -->\n${p.body}`);
+    if (policyBlocks.length) {
+      bodyOut += `\n\n${policyBlocks.join("\n\n")}`;
     }
     if (skillRefs.length) {
       bodyOut += `\n\n## Skills\n\nThese scope skills are preloaded into your context — use them for work in this scope: ${skillRefs.map((s) => `\`${s}\``).join(", ")}.`;
@@ -478,7 +483,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
         const seen = new Set<string>();
         const blocks = hardInline
           .filter((h) => !seen.has(h.pol.path) && seen.add(h.pol.path))
-          .map((h) => `**Hard policy — binds when working in ${h.scope}:**\n\n${h.pol.body}`);
+          .map((h) => `<!-- policy: ${h.pol.path} -->\n**Hard policy — binds when working in ${h.scope}:**\n\n${h.pol.body}`);
         for (const h of hardInline) placePolicy(h.pol.path, n.genName);
         if (blocks.length) bodyOut += `\n\n${blocks.join("\n\n")}`;
       }

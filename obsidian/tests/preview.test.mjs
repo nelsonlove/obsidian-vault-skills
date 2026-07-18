@@ -141,6 +141,22 @@ test("hard policy is placed into crosscutting agents that inline it", () => {
   assert.ok(pol.agents.includes("sweeper"), "hard inline into the crosscutting agent");
 });
 
+test("preview entries carry transclusion sources; compiled content is marked", async () => {
+  const notes = [
+    ...SAMPLE,
+    { path: "shared.md", frontmatter: { title: "plain" }, content: "Shared conventions text." },
+  ].map((n) => (n.path === "sweep.md"
+    ? { ...n, content: "---\ntype: skill\n---\n\nSweep.\n\n![[shared]]" }
+    : n));
+  const p = await previewVault(mockApp(notes), OPTS(tmpdir()));
+  const sweep = p.entries.find((e) => e.relOut === "skills/deadline-sweep/SKILL.md");
+  assert.deepEqual(sweep.sources, ["shared.md"], "transcluded note reported as a source");
+  assert.match(sweep.content, /<!-- transcluded from: shared\.md -->\nShared conventions text\.\n<!-- end transclusion: shared\.md -->/);
+  const grants = p.entries.find((e) => e.relOut === "agents/grants.md");
+  assert.equal(grants.sources, undefined, "no sources field without transclusions");
+  assert.match(grants.content, /<!-- policy: pol\.md -->\nGrants policy body\./, "injected policy names its source note");
+});
+
 test("unresolved policy gets no placement entry", () => {
   const notes = [
     { path: "root.md", frontmatter: { type: "agent", name: "vault", root: true }, parentPaths: [], body: "Root." },

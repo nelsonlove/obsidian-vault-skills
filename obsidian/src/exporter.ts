@@ -155,7 +155,7 @@ function embedLookup(app: App): EmbedLookup {
 export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIELDS, warnings?: string[]): Promise<NoteInput[]> {
   const notes: NoteInput[] = [];
   const resolve = warnings
-    ? (body: string, from: string) => resolveTransclusions(body, from, embedLookup(app), warnings)
+    ? (body: string, from: string, sources: Set<string>) => resolveTransclusions(body, from, embedLookup(app), warnings, sources)
     : null;
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
@@ -169,7 +169,8 @@ export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIEL
     if (!kind) continue;
     const raw = await app.vault.cachedRead(file);
     let body = stripFrontmatter(raw);
-    if (resolve) body = await resolve(body, file.path);
+    const sources = new Set<string>();
+    if (resolve) body = await resolve(body, file.path, sources);
     notes.push({
       // Copy the view (never mutate: in nested mode `view` is Obsidian's live cache object) and
       // normalize the kind into `type` so the transform + policy count read one source of truth.
@@ -177,6 +178,7 @@ export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIEL
       path: file.path,
       body,
       parentPaths: resolveParents(app, file.path, parent),
+      sources: [...sources],
     });
   }
   return notes;
@@ -351,6 +353,9 @@ export interface PreviewEntry {
   kind: EmittedKind | "hook";
   relOut: string;
   from: string;
+  /** Vault paths of notes transcluded into the source note's body — the other notes an
+   *  edit to this compiled file's content might actually belong to. */
+  sources?: string[];
   name?: string;
   description?: string;
   content: string;
@@ -391,12 +396,15 @@ export async function previewVault(
 
   const files = outputFileSet(generated, guards, vaultPath);
 
+  const sourcesByPath = new Map(notes.map((n) => [n.path, n.sources ?? []]));
   const entries: PreviewEntry[] = await Promise.all(files.map(async (g) => {
     let cached: string | null = null;
     try { cached = await fs.promises.readFile(path.join(opts.outputDir, g.relOut), "utf8"); } catch { /* not exported yet */ }
     const status: PreviewStatus = cached == null ? "added" : cached === g.content ? "unchanged" : "modified";
+    const sources = sourcesByPath.get(g.from);
     return {
       kind: g.kind, relOut: g.relOut, from: g.from, name: g.name, description: g.description,
+      ...(sources?.length ? { sources } : {}),
       content: g.content, bytes: Buffer.byteLength(g.content), status,
       ...(status === "modified" ? { cachedContent: cached as string } : {}),
     };

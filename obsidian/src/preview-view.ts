@@ -329,6 +329,15 @@ export class PreviewView extends ItemView {
     meta.style.cssText = "color: var(--text-muted); font-size: var(--font-ui-smaller); margin-bottom: 6px;";
     meta.createEl("span", { text: `${e.kind} · ${e.relOut} · ${e.bytes} bytes · ${e.status} · source: ` });
     this.sourceLink(meta, e.from);
+    if (e.sources?.length) {
+      const asm = detail.createDiv();
+      asm.style.cssText = "color: var(--text-muted); font-size: var(--font-ui-smaller); margin-bottom: 6px;";
+      asm.createEl("span", { text: "transcludes: " });
+      e.sources.forEach((s, i) => {
+        if (i) asm.createEl("span", { text: " · " });
+        this.sourceLink(asm, s);
+      });
+    }
 
     const tabs: Tab[] = e.status === "modified" ? ["listing", "compiled", "diff"] : ["listing", "compiled"];
     if (!tabs.includes(this.tab)) this.tab = "listing";

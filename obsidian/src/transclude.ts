@@ -111,6 +111,9 @@ interface ResolveContext {
   warnings: string[];
   /** Active embed chain, for cycle detection (paths, source-note first). */
   chain: string[];
+  /** When present, collects the vault path of every note whose content was inlined
+   *  (all depths) — the compiled artifact's transclusion sources. */
+  sources?: Set<string>;
 }
 
 async function resolveBody(body: string, fromPath: string, ctx: ResolveContext): Promise<string> {
@@ -159,21 +162,31 @@ async function resolveBody(body: string, fromPath: string, ctx: ResolveContext):
       }
     }
     const resolved = await resolveBody(content, src.path, { ...ctx, chain: [...ctx.chain, src.path] });
-    out.push(resolved);
+    // Provenance markers: compiled artifacts leave the vault, and without these the
+    // inlined text is indistinguishable from the host note's own prose — an agent
+    // editing its definition couldn't tell which note owns the passage (and might
+    // paste compiled text back into the host note, flattening the composition).
+    ctx.sources?.add(src.path);
+    const label = section ? `${src.path}#${section}` : src.path;
+    out.push(`<!-- transcluded from: ${label} -->\n${resolved}\n<!-- end transclusion: ${label} -->`);
   }
   out.push(body.slice(last));
   return out.join("");
 }
 
-/** Inline every `![[X]]` / `![[X#Heading]]` / `![[X#^block]]` embed in `body`.
+/** Inline every `![[X]]` / `![[X#Heading]]` / `![[X#^block]]` embed in `body`, wrapping
+ *  each inlined block in `<!-- transcluded from: … -->` / `<!-- end transclusion: … -->`
+ *  markers so the compiled artifact names the note that owns the passage.
  *  Unresolvable embeds (missing target/section, cycle, depth, attachments, code spans)
- *  are left in place; problems are appended to `warnings`. */
+ *  are left in place; problems are appended to `warnings`. When `sources` is given, the
+ *  vault paths of every inlined note (all depths) are collected into it. */
 export async function resolveTransclusions(
   body: string,
   sourcePath: string,
   lookup: EmbedLookup,
   warnings: string[],
+  sources?: Set<string>,
 ): Promise<string> {
   if (!body.includes("![[")) return body;
-  return resolveBody(body, sourcePath, { lookup, warnings, chain: [sourcePath] });
+  return resolveBody(body, sourcePath, { lookup, warnings, chain: [sourcePath], sources });
 }

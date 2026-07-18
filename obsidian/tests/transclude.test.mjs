@@ -16,12 +16,15 @@ const lookupOf = (files) => async (linkpath) => {
 const resolve = (body, files, warnings = []) =>
   resolveTransclusions(body, "source.md", lookupOf(files), warnings);
 
-test("full-note embed inlines the body with frontmatter stripped", async () => {
+/** Inlined blocks carry provenance markers naming the note (and section) they came from. */
+const wrap = (label, s) => `<!-- transcluded from: ${label} -->\n${s}\n<!-- end transclusion: ${label} -->`;
+
+test("full-note embed inlines the body (frontmatter stripped) with provenance markers", async () => {
   const warnings = [];
   const out = await resolve("before\n\n![[Target]]\n\nafter", {
     "notes/Target.md": "---\ntitle: Target\ntags: [x]\n---\n\nTarget body line 1\nline 2",
   }, warnings);
-  assert.equal(out, "before\n\nTarget body line 1\nline 2\n\nafter");
+  assert.equal(out, `before\n\n${wrap("notes/Target.md", "Target body line 1\nline 2")}\n\nafter`);
   assert.equal(warnings.length, 0);
 });
 
@@ -29,29 +32,29 @@ test("heading embed extracts that section only, heading line included", async ()
   const out = await resolve("![[Target#Middle]]", {
     "Target.md": "# Top\n\nintro\n\n## Middle\n\nmiddle body\n\n### Sub\n\nsub body\n\n## Later\n\nlater body",
   });
-  assert.equal(out, "## Middle\n\nmiddle body\n\n### Sub\n\nsub body");
+  assert.equal(out, wrap("Target.md#Middle", "## Middle\n\nmiddle body\n\n### Sub\n\nsub body"));
 });
 
 test("heading match is case-insensitive", async () => {
   const out = await resolve("![[Target#middle section]]", {
     "Target.md": "## Middle Section\n\nbody",
   });
-  assert.equal(out, "## Middle Section\n\nbody");
+  assert.equal(out, wrap("Target.md#middle section", "## Middle Section\n\nbody"));
 });
 
 test("block embed extracts the anchored paragraph, marker stripped", async () => {
   const out = await resolve("![[Target#^abc123]]", {
     "Target.md": "para one\n\npara two line 1\npara two line 2 ^abc123\n\npara three",
   });
-  assert.equal(out, "para two line 1\npara two line 2");
+  assert.equal(out, wrap("Target.md#^abc123", "para two line 1\npara two line 2"));
 });
 
-test("nested embeds resolve recursively", async () => {
+test("nested embeds resolve recursively, each level marked", async () => {
   const out = await resolve("![[A]]", {
     "A.md": "A says: ![[B]]",
     "B.md": "B content",
   });
-  assert.equal(out, "A says: B content");
+  assert.equal(out, wrap("A.md", `A says: ${wrap("B.md", "B content")}`));
 });
 
 test("cycle is left unresolved with a warning", async () => {
@@ -60,7 +63,7 @@ test("cycle is left unresolved with a warning", async () => {
     "A.md": "A: ![[B]]",
     "B.md": "B: ![[A]]",
   }, warnings);
-  assert.equal(out, "A: B: ![[A]]");
+  assert.equal(out, wrap("A.md", `A: ${wrap("B.md", "B: ![[A]]")}`));
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /cycle/);
 });
@@ -75,7 +78,7 @@ test("depth cap leaves the deepest embed unresolved with a warning", async () =>
   assert.match(warnings[0], /depth/);
 });
 
-test("unresolved target is left as-is with a warning", async () => {
+test("unresolved target is left as-is with a warning, no markers", async () => {
   const warnings = [];
   const out = await resolve("keep ![[Missing]] here", {}, warnings);
   assert.equal(out, "keep ![[Missing]] here");
@@ -104,7 +107,7 @@ test("embeds in fenced code blocks and inline code spans are documentation — s
   const warnings = [];
   const body = "Use `![[X]]` like this:\n\n```md\n![[X]]\n```\n\n![[Real]]";
   const out = await resolve(body, { "Real.md": "resolved" }, warnings);
-  assert.equal(out, "Use `![[X]]` like this:\n\n```md\n![[X]]\n```\n\nresolved");
+  assert.equal(out, `Use \`![[X]]\` like this:\n\n\`\`\`md\n![[X]]\n\`\`\`\n\n${wrap("Real.md", "resolved")}`);
   assert.equal(warnings.length, 0);
 });
 
@@ -112,20 +115,20 @@ test("a ``` line inside a ```` fence is content, not a close (fence lengths resp
   const warnings = [];
   const body = "````md\n![[X]]\n```\n![[Y]]\n````\n\n![[Real]]";
   const out = await resolve(body, { "Real.md": "resolved" }, warnings);
-  assert.equal(out, "````md\n![[X]]\n```\n![[Y]]\n````\n\nresolved");
+  assert.equal(out, `\`\`\`\`md\n![[X]]\n\`\`\`\n![[Y]]\n\`\`\`\`\n\n${wrap("Real.md", "resolved")}`);
   assert.equal(warnings.length, 0);
 });
 
 test("alias after | is display-only and ignored", async () => {
   const out = await resolve("![[Target|shown as]]", { "Target.md": "body" });
-  assert.equal(out, "body");
+  assert.equal(out, wrap("Target.md", "body"));
 });
 
 test("nested heading path targets the last segment", async () => {
   const out = await resolve("![[Target#Top#Inner]]", {
     "Target.md": "# Top\n\n## Inner\n\ninner body",
   });
-  assert.equal(out, "## Inner\n\ninner body");
+  assert.equal(out, wrap("Target.md#Top#Inner", "## Inner\n\ninner body"));
 });
 
 test("body without embeds passes through untouched", async () => {
@@ -142,6 +145,15 @@ test("relative resolution: nested embed resolves from the embedded note's path",
     return null;
   };
   const out = await resolveTransclusions("![[A]]", "source.md", lookup, []);
-  assert.equal(out, "b");
+  assert.equal(out, wrap("dir/A.md", wrap("dir/B.md", "b")));
   assert.deepEqual(calls, [["A", "source.md"], ["B", "dir/A.md"]]);
+});
+
+test("sources collector gathers every inlined note path, all depths; unresolved excluded", async () => {
+  const sources = new Set();
+  await resolveTransclusions("![[A]] ![[Missing]]", "source.md", lookupOf({
+    "A.md": "A says: ![[B]]",
+    "B.md": "B content",
+  }), [], sources);
+  assert.deepEqual([...sources].sort(), ["A.md", "B.md"]);
 });
