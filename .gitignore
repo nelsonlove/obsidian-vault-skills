@@ -12,3 +12,6 @@ claude-code/.vault-skills-manifest.json
 
 # Internal delivery registry (ops skill) — local-only, not part of the product
 .ops/
+
+# Dependencies — never tracked (a committed symlink here broke fresh checkouts once)
+node_modules/
