@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveTransclusions, MAX_EMBED_DEPTH } from "../src/transclude.ts";
+import { resolveTransclusions, transclusionOpen, transclusionClose, MAX_EMBED_DEPTH } from "../src/transclude.ts";
 
 /** Lookup over a fixture map of vault-path → raw file content. Linkpaths resolve by
  *  basename (with or without .md), mimicking Obsidian's shortest-path resolution. */
@@ -16,8 +16,11 @@ const lookupOf = (files) => async (linkpath) => {
 const resolve = (body, files, warnings = []) =>
   resolveTransclusions(body, "source.md", lookupOf(files), warnings);
 
-/** Inlined blocks carry provenance markers naming the note (and section) they came from. */
-const wrap = (label, s) => `<!-- transcluded from: ${label} -->\n${s}\n<!-- end transclusion: ${label} -->`;
+/** Inlined blocks carry provenance markers naming the note (and section) they came from.
+ *  Block-context embeds (alone on their line) get newline-separated markers; inline-context
+ *  embeds get markers with no added newlines, preserving the surrounding structure. */
+const wrap = (label, s) => `${transclusionOpen(label)}\n${s}\n${transclusionClose(label)}`;
+const wrapInline = (label, s) => `${transclusionOpen(label)}${s}${transclusionClose(label)}`;
 
 test("full-note embed inlines the body (frontmatter stripped) with provenance markers", async () => {
   const warnings = [];
@@ -49,23 +52,45 @@ test("block embed extracts the anchored paragraph, marker stripped", async () =>
   assert.equal(out, wrap("Target.md#^abc123", "para two line 1\npara two line 2"));
 });
 
-test("nested embeds resolve recursively, each level marked", async () => {
+test("nested embeds resolve recursively, each level marked (inner is inline-context)", async () => {
   const out = await resolve("![[A]]", {
     "A.md": "A says: ![[B]]",
     "B.md": "B content",
   });
-  assert.equal(out, wrap("A.md", `A says: ${wrap("B.md", "B content")}`));
+  assert.equal(out, wrap("A.md", `A says: ${wrapInline("B.md", "B content")}`));
 });
 
-test("cycle is left unresolved with a warning", async () => {
+test("cycle is left unresolved with a warning; outer markers still state origin", async () => {
+  // Markers assert where inlined text came FROM, not that every embed inside it resolved:
+  // the innermost ![[A]] stays raw exactly as it appears in B.md, and the warning carries
+  // the failure. See the marker-builder doc in transclude.ts.
   const warnings = [];
   const out = await resolve("![[A]]", {
     "A.md": "A: ![[B]]",
     "B.md": "B: ![[A]]",
   }, warnings);
-  assert.equal(out, wrap("A.md", `A: ${wrap("B.md", "B: ![[A]]")}`));
+  assert.equal(out, wrap("A.md", `A: ${wrapInline("B.md", "B: ![[A]]")}`));
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /cycle/);
+});
+
+test("inline-context embeds keep list items and table rows on one line", async () => {
+  const out = await resolve("- see ![[X#^blk]] for the rule\n\n| col | ![[X#^blk]] |", {
+    "X.md": "the rule text ^blk",
+  });
+  assert.equal(out, [
+    `- see ${wrapInline("X.md#^blk", "the rule text")} for the rule`,
+    "",
+    `| col | ${wrapInline("X.md#^blk", "the rule text")} |`,
+  ].join("\n"));
+});
+
+test("marker labels soften --> so a heading can't close the comment early", async () => {
+  const out = await resolve("![[X#Inputs --> outputs]]", {
+    "X.md": "## Inputs --> outputs\n\nbody",
+  });
+  assert.ok(!out.slice(0, out.indexOf("body")).includes("--> outputs -->"), "no premature close");
+  assert.match(out, /<!-- transcluded from: X\.md#Inputs --› outputs -->/);
 });
 
 test("depth cap leaves the deepest embed unresolved with a warning", async () => {
@@ -124,19 +149,7 @@ test("alias after | is display-only and ignored", async () => {
   assert.equal(out, wrap("Target.md", "body"));
 });
 
-test("nested heading path targets the last segment", async () => {
-  const out = await resolve("![[Target#Top#Inner]]", {
-    "Target.md": "# Top\n\n## Inner\n\ninner body",
-  });
-  assert.equal(out, wrap("Target.md#Top#Inner", "## Inner\n\ninner body"));
-});
-
-test("body without embeds passes through untouched", async () => {
-  const body = "plain [[wikilink]] and ![image](url) but no embeds";
-  assert.equal(await resolve(body, {}), body);
-});
-
-test("relative resolution: nested embed resolves from the embedded note's path", async () => {
+test("relative resolution: nested embed resolves from the embedded note's path (block at both levels)", async () => {
   const calls = [];
   const lookup = async (linkpath, fromPath) => {
     calls.push([linkpath, fromPath]);
@@ -147,6 +160,18 @@ test("relative resolution: nested embed resolves from the embedded note's path",
   const out = await resolveTransclusions("![[A]]", "source.md", lookup, []);
   assert.equal(out, wrap("dir/A.md", wrap("dir/B.md", "b")));
   assert.deepEqual(calls, [["A", "source.md"], ["B", "dir/A.md"]]);
+});
+
+test("nested heading path targets the last segment", async () => {
+  const out = await resolve("![[Target#Top#Inner]]", {
+    "Target.md": "# Top\n\n## Inner\n\ninner body",
+  });
+  assert.equal(out, wrap("Target.md#Top#Inner", "## Inner\n\ninner body"));
+});
+
+test("body without embeds passes through untouched", async () => {
+  const body = "plain [[wikilink]] and ![image](url) but no embeds";
+  assert.equal(await resolve(body, {}), body);
 });
 
 test("sources collector gathers every inlined note path, all depths; unresolved excluded", async () => {

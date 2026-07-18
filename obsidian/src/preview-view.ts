@@ -111,6 +111,7 @@ export class PreviewView extends ItemView {
       this.error = null;
       this.sources = new Set([
         ...this.result.entries.map((e) => e.from).filter((f) => !f.startsWith("(")),
+        ...this.result.entries.flatMap((e) => e.sources ?? []),
         ...this.result.policies.map((p) => p.path),
       ]);
       if (this.selected && !this.selectionExists(this.selected)) this.selected = null;

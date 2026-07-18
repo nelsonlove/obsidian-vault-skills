@@ -100,6 +100,10 @@ export interface ExportSummary {
   warnings: string[];
   errors: string[];
   outputDir: string;
+  /** Vault paths of every note transcluded into the exported output — the extra notes
+   *  (beyond typed skill/agent/policy/command notes) whose edits should re-trigger an
+   *  export-on-save (see main.ts). */
+  sources: string[];
 }
 
 /** Extract link targets from a frontmatter `parent` value (string or list). */
@@ -266,6 +270,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     warnings,
     errors,
     outputDir: opts.outputDir,
+    sources: [...new Set(generated.flatMap((g) => g.sources ?? []))],
   };
 }
 
@@ -396,15 +401,13 @@ export async function previewVault(
 
   const files = outputFileSet(generated, guards, vaultPath);
 
-  const sourcesByPath = new Map(notes.map((n) => [n.path, n.sources ?? []]));
   const entries: PreviewEntry[] = await Promise.all(files.map(async (g) => {
     let cached: string | null = null;
     try { cached = await fs.promises.readFile(path.join(opts.outputDir, g.relOut), "utf8"); } catch { /* not exported yet */ }
     const status: PreviewStatus = cached == null ? "added" : cached === g.content ? "unchanged" : "modified";
-    const sources = sourcesByPath.get(g.from);
     return {
       kind: g.kind, relOut: g.relOut, from: g.from, name: g.name, description: g.description,
-      ...(sources?.length ? { sources } : {}),
+      ...(g.sources?.length ? { sources: g.sources } : {}),
       content: g.content, bytes: Buffer.byteLength(g.content), status,
       ...(status === "modified" ? { cachedContent: cached as string } : {}),
     };

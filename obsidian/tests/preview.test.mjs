@@ -157,6 +157,33 @@ test("preview entries carry transclusion sources; compiled content is marked", a
   assert.match(grants.content, /<!-- policy: pol\.md -->\nGrants policy body\./, "injected policy names its source note");
 });
 
+test("transclusions inside injected policy bodies reach the agent's sources", () => {
+  const notes = [
+    { path: "root.md", frontmatter: { type: "agent", name: "vault", root: true }, parentPaths: [], body: "Root." },
+    { path: "grants.md", frontmatter: { type: "agent", name: "grants" }, parentPaths: ["root.md"], body: "Grants." },
+    { path: "pol.md", frontmatter: { type: "policy" }, parentPaths: ["grants.md"], body: "Policy with inlined text.", sources: ["shared.md"] },
+  ];
+  const r = transformAll(notes, { pluginName: "vault-skills" });
+  const grants = r.generated.find((g) => g.relOut === "agents/grants.md");
+  assert.deepEqual(grants.sources, ["shared.md"], "policy-body transclusion attributed to the agent file");
+  const root = r.generated.find((g) => g.relOut === "agents/vault.md");
+  assert.equal(root.sources, undefined, "agent without transclusions or policy embeds carries none");
+});
+
+test("Vault access assembly sentence appears only for assembled agents", () => {
+  const notes = [
+    { path: "root.md", frontmatter: { type: "agent", name: "vault", root: true }, parentPaths: [], body: "Root." },
+    { path: "plain.md", frontmatter: { type: "agent", name: "plain" }, parentPaths: ["root.md"], body: "Plain." },
+    { path: "pol.md", frontmatter: { type: "policy" }, parentPaths: ["root.md"], body: "Global policy." },
+  ];
+  const withPolicy = transformAll(notes, { pluginName: "vault-skills", vaultPath: "/v" });
+  assert.match(withPolicy.generated.find((g) => g.relOut === "agents/plain.md").content, /assembled from multiple notes/);
+  const bare = transformAll(notes.filter((n) => n.path !== "pol.md"), { pluginName: "vault-skills", vaultPath: "/v" });
+  const plain = bare.generated.find((g) => g.relOut === "agents/plain.md");
+  assert.match(plain.content, /## Vault access/);
+  assert.ok(!/assembled from multiple notes/.test(plain.content), "no assembly claim without marked blocks");
+});
+
 test("unresolved policy gets no placement entry", () => {
   const notes = [
     { path: "root.md", frontmatter: { type: "agent", name: "vault", root: true }, parentPaths: [], body: "Root." },

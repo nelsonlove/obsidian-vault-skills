@@ -48,14 +48,21 @@ export interface ChangeTriggerDeps {
   getFrontmatter: (file: unknown) => Record<string, unknown> | undefined;
   /** Request an export. Debounced upstream so a rename's burst collapses into one run. */
   requestExport: () => void;
+  /** Whether this vault path is transcluded into the compiled output (per the last
+   *  export/preview) — such notes are export-relevant even without a skill/agent kind,
+   *  since their text is inlined into the artifacts. */
+  isSource?: (path: string) => boolean;
 }
 
-/** Handle a metadataCache "changed" event: request a (debounced) export only when the
- *  changed note is a skill/agent/policy — resolved through the configured detection mode
+/** Handle a metadataCache "changed" event: request a (debounced) export when the changed
+ *  note is a skill/agent/policy/command — resolved through the configured detection mode
  *  (`type:` field or kind tag), so a bare `type:` on an unrelated note doesn't false-positive
- *  and an ambiguous multi-kind note doesn't trigger churn. */
+ *  and an ambiguous multi-kind note doesn't trigger churn — or when it is a plain note whose
+ *  content is transcluded into the compiled output (`isSource`). */
 export function handleNoteChanged(file: unknown, deps: ChangeTriggerDeps): void {
   if (!deps.isEnabled()) return;
+  const path = (file as { path?: unknown } | null)?.path;
+  if (typeof path === "string" && deps.isSource?.(path)) { deps.requestExport(); return; }
   const fm = deps.getFrontmatter(file);
   if (!fm) return;
   const cfg = deps.fields();

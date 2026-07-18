@@ -22,6 +22,17 @@ export const MAX_EMBED_DEPTH = 5;
 
 const EMBED_RE = /!\[\[([^\[\]]+?)\]\]/g;
 
+/** HTML comments terminate at the first `-->`, so a heading/path containing one would
+ *  close the marker early and leak the rest as prose; soften just that sequence. */
+const safeLabel = (s: string): string => s.replace(/-->/g, "--›");
+
+/** Provenance marker builders — single source of truth for the marker format, shared with
+ *  the transform's agent-facing prose and the tests. Markers state where inlined text came
+ *  FROM; they do not promise every embed inside it also resolved (unresolved inner embeds
+ *  are left raw and warned). */
+export const transclusionOpen = (label: string): string => `<!-- transcluded from: ${safeLabel(label)} -->`;
+export const transclusionClose = (label: string): string => `<!-- end transclusion: ${safeLabel(label)} -->`;
+
 /** Strip a single leading YAML frontmatter block. (Shared with exporter.ts.) */
 export function stripFrontmatter(content: string): string {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "");
@@ -166,9 +177,20 @@ async function resolveBody(body: string, fromPath: string, ctx: ResolveContext):
     // inlined text is indistinguishable from the host note's own prose — an agent
     // editing its definition couldn't tell which note owns the passage (and might
     // paste compiled text back into the host note, flattening the composition).
+    // Block-context embeds (alone on their line) get newline-separated markers; embeds
+    // inside a line (list items, table cells, mid-sentence block refs) get markers with
+    // no added newlines, so the surrounding markdown structure survives exactly as the
+    // pre-marker splice did.
     ctx.sources?.add(src.path);
     const label = section ? `${src.path}#${section}` : src.path;
-    out.push(`<!-- transcluded from: ${label} -->\n${resolved}\n<!-- end transclusion: ${label} -->`);
+    const lineStart = body.lastIndexOf("\n", idx - 1) + 1;
+    const nextNl = body.indexOf("\n", idx + m[0].length);
+    const lineEnd = nextNl === -1 ? body.length : nextNl;
+    const blockContext =
+      /^\s*$/.test(body.slice(lineStart, idx)) && /^\s*$/.test(body.slice(idx + m[0].length, lineEnd));
+    out.push(blockContext
+      ? `${transclusionOpen(label)}\n${resolved}\n${transclusionClose(label)}`
+      : `${transclusionOpen(label)}${resolved}${transclusionClose(label)}`);
   }
   out.push(body.slice(last));
   return out.join("");
