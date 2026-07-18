@@ -130,6 +130,36 @@ test("analyzeVault surfaces embed warnings", async () => {
   assert.ok(a.warnings.some((w) => /unresolved transclusion/.test(w)));
 });
 
+test("runExport emits territory-guard hook files iff a territory scope has hard policies", async () => {
+  const guarded = [
+    ...SAMPLE,
+    { path: "legal.md", frontmatter: { type: "agent", name: "legal", label: "Legal", parent: "[[root]]", territory: ["80-89 Divorce/**"] },
+      content: "---\ntype: agent\n---\n\nLegal agent." },
+    { path: "hp.md", frontmatter: { type: "policy", severity: "hard", parent: "[[legal]]" },
+      content: "---\ntype: policy\n---\n\nNEVER-ALTER" },
+  ];
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "vs-guard-exp-"));
+  await runExport(mockApp(guarded), { outputDir: out, pluginName: "vault-skills" });
+  const hooks = JSON.parse(fs.readFileSync(path.join(out, "hooks/hooks.json"), "utf8"));
+  assert.ok(hooks.hooks.PreToolUse, "doorman entries present");
+  assert.ok(hooks.hooks.PostToolUse, "base skill-runs hook retained");
+  const manifest = JSON.parse(fs.readFileSync(path.join(out, "hooks/guard-manifest.json"), "utf8"));
+  assert.equal(manifest.guards.length, 1);
+  assert.deepEqual(manifest.guards[0].globs, ["80-89 Divorce/**"]);
+  const mode = fs.statSync(path.join(out, "hooks/scope-guard.sh")).mode & 0o111;
+  assert.ok(mode, "guard script is executable");
+  assert.ok(fs.existsSync(path.join(out, "hooks/scope-guard.py")));
+
+  // Re-export with the hard policy softened → guard files removed as stale.
+  const softened = guarded.map((n) => n.path === "hp.md"
+    ? { ...n, frontmatter: { type: "policy", parent: "[[legal]]" } } : n);
+  await runExport(mockApp(softened), { outputDir: out, pluginName: "vault-skills" });
+  assert.ok(!fs.existsSync(path.join(out, "hooks/guard-manifest.json")), "manifest removed when no guards");
+  assert.ok(!fs.existsSync(path.join(out, "hooks/scope-guard.sh")), "script removed when no guards");
+
+  fs.rmSync(out, { recursive: true, force: true });
+});
+
 test("runExport removes stale artifacts when a note disappears", async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "vs-stale-"));
   await runExport(mockApp(SAMPLE), { outputDir: out, pluginName: "vault-skills" });

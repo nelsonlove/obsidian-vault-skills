@@ -29,6 +29,7 @@ its skills; `root → … → leaf` delegation). Folders become purely organizat
 | `version` | no | skill | Skill version. |
 | `crosscutting` | no | agent | `true` ⇒ horizontal slot agent; fanned into every scope agent's routing, excluded from vertical lanes. |
 | `slot` | no | agent | Display-only standard-zero label for a cross-cutting agent, e.g. `.00`. |
+| `territory` | no | agent | Vault-relative globs declaring the scope's *content* (e.g. `["80-89 Divorce/**"]`). Consumed only by the territory guard; declared data, never an assumed layout. |
 | `severity` | no | policy | `hard` ⇒ the policy is also compiled **full-text into every crosscutting agent** (ruin-risk rules get no read step to skip). Default (absent/other): soft — subtree injection plus a pointer in the scope-policy index. |
 | *passthrough* | no | skill | The documented SKILL.md keys `when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `allowed-tools`, `disallowed-tools`, `model`, `effort`, `context`, `agent`, `paths`, `shell` are copied into the generated SKILL.md verbatim (same namespacing as all fields). All other frontmatter is ignored. `hooks` is not passed through (nested YAML). |
 
@@ -150,6 +151,19 @@ crosscutting agents themselves (they aren't scopes to visit). `severity: hard` p
 are inlined in full instead of pointer-listed, prefixed with the scope they bind in.
 Scope identity reaches the visitor through the dispatch brief — the generated
 Cross-cutting specialists section already tells dispatchers to name the scope.
+
+### Territory guard (generated hook)
+
+When a scope agent declares `territory:` **and** carries `severity: hard` policies (its own
+or an ancestor's below the root), the export generates a doorman hook into the plugin:
+`hooks/hooks.json` (the static base plus PreToolUse entries), `hooks/scope-guard.sh` + `.py`,
+and `hooks/guard-manifest.json` (vault path + per-scope globs and hard-policy pointers).
+Semantics: the **first** write (Edit/Write/NotebookEdit, or a write-shaped Bash command
+touching a territory path) per session per scope is denied with the scope's hard policies
+named in the message; the retry passes. Delivery at the moment of danger, not a wall —
+hooks can't distinguish agents, so a permanent block would break the scope's own residents.
+Degrades to allow (never to block) when python3 or the manifest is missing. No guards ⇒
+none of these files are emitted and the static hooks.json ships unchanged.
 
 ### Design principle: frontmatter over geography
 

@@ -68,6 +68,16 @@ export interface TransformResult {
   errors: string[];
   tree: TreeNode[];
   policies: PolicyPlacement[];
+  guards: Guard[];
+}
+
+/** Territory guard data for one scope: compiled into hooks/guard-manifest.json when the
+ *  scope declares `territory:` globs AND carries `severity: hard` policies. */
+export interface Guard {
+  scope: string;                                  // breadcrumbed label, e.g. "Divorce"
+  agent: string;                                  // scope agent's generated name
+  globs: string[];                                // vault-relative territory globs (declared, not assumed)
+  hardPolicies: { title: string; path: string }[];
 }
 
 interface Node {
@@ -84,6 +94,7 @@ interface Node {
   model?: string;
   crosscutting: boolean;
   slot?: string;
+  territory?: string[];
   extra: Record<string, unknown>;
   body: string;
   // resolved:
@@ -269,6 +280,7 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
       model: str(fm.model),
       crosscutting: fm.crosscutting === true,
       slot: str(fm.slot),
+      territory: toolsArray(fm.territory),
       extra,
       body: note.body.trim(),
       parent: null, children: [], ownedSkills: [], level: -1, genName: "", valid: true,
@@ -505,5 +517,27 @@ export function transformAll(notes: NoteInput[], opts: TransformOptions): Transf
     .filter((p) => resolvedPolicies.has(p))
     .map((p) => ({ path: p.path, title: p.title, hard: p.hard, agents: [...(policyAgents.get(p.path) ?? [])] }));
 
-  return { generated, warnings, errors, tree, policies: policyPlacements };
+  // ---- territory guards: scopes that declared territory AND carry hard policies ----
+  const guards: Guard[] = [];
+  for (const a of nodes) {
+    if (!a.valid || a.kind !== "agent" || !a.territory?.length) continue;
+    if (a.crosscutting || a.isRoot) {
+      warnings.push(`${a.path}: territory on a ${a.isRoot ? "root" : "crosscutting"} agent is ignored — territory belongs on a scope agent`);
+      continue;
+    }
+    // Hard policies binding in this territory: attached to the scope or any ancestor below
+    // the root (root-attached policies are global — already in every agent's compile).
+    const chain: Node[] = [];
+    for (let cur: Node | null = a; cur && !cur.isRoot; cur = cur.parent) chain.unshift(cur);
+    const hard = chain.flatMap((c) => policiesByNode.get(c.path) ?? []).filter((p) => p.hard);
+    if (!hard.length) continue;
+    guards.push({
+      scope: scopeOf(a),
+      agent: a.genName,
+      globs: a.territory,
+      hardPolicies: hard.map((p) => ({ title: p.title, path: p.path })),
+    });
+  }
+
+  return { generated, warnings, errors, tree, policies: policyPlacements, guards };
 }
