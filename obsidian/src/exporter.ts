@@ -1,9 +1,8 @@
 import type { App } from "obsidian";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { transformAll, SKILL_PASSTHROUGH_FIELDS, type EmittedKind, type Generated, type Guard, type NoteInput, type PolicyPlacement, type TreeNode } from "./transform.js";
+import { transformAll, SKILL_PASSTHROUGH_FIELDS, type EmittedKind, type Generated, type NoteInput, type PolicyPlacement, type TreeNode } from "./transform.js";
 import { resolveTransclusions, stripFrontmatter, type EmbedLookup } from "./transclude.js";
-import { buildGuardManifest, buildHooksJson, GUARD_PY, GUARD_SCRIPT } from "./guard.js";
 import { STATIC_FILES } from "./static-skills.js";
 import { assetDirFor, collectAssets, copyAsset, type CollectAssetsOptions } from "./assets.js";
 
@@ -126,7 +125,7 @@ function resolveParents(app: App, sourcePath: string, v: unknown): string[] {
 // The vault-skills fields the transform reads (parent is handled separately, resolved to
 // paths), plus the SKILL.md passthrough fields — all namespaced the same way.
 const VS_FIELDS = [...new Set(["type", "root", "name", "id", "label", "description", "version", "tools", "model",
-  "crosscutting", "slot", "severity", "territory", ...SKILL_PASSTHROUGH_FIELDS])];
+  "crosscutting", "slot", "severity", ...SKILL_PASSTHROUGH_FIELDS])];
 
 /** Extract a bare view of the vault-skills fields (+ the raw parent value) per the field mode,
  *  so the pure transform stays namespace-agnostic. */
@@ -189,7 +188,7 @@ export async function collectNotes(app: App, fields: DetectConfig = DEFAULT_FIEL
 }
 
 export async function runExport(app: App, opts: ExportOptions): Promise<ExportSummary> {
-  const { generated, warnings, errors, guards, vaultPath } = await collectAndTransform(app, opts.fields ?? DEFAULT_FIELDS, opts.pluginName);
+  const { generated, warnings, errors, vaultPath } = await collectAndTransform(app, opts.fields ?? DEFAULT_FIELDS, opts.pluginName);
 
   ensurePluginManifest(opts.outputDir, opts.pluginName, opts.pluginDescription, opts.version);
 
@@ -197,7 +196,7 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
   const manifestPath = path.join(opts.outputDir, MANIFEST_NAME);
   const prev = readManifestFiles(opts.outputDir);
 
-  const files = outputFileSet(generated, guards, vaultPath);
+  const files = outputFileSet(generated);
 
   // Supporting files: each skill note may have a parallel folder of assets (scripts,
   // references) that gets bundled into its generated skills/<name>/ dir. Asset trouble
@@ -244,7 +243,6 @@ export async function runExport(app: App, opts: ExportOptions): Promise<ExportSu
     const abs = path.join(opts.outputDir, g.relOut);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, g.content);
-    if (g.relOut === "hooks/scope-guard.sh") { try { fs.chmodSync(abs, 0o755); } catch { /* non-POSIX fs */ } }
   }
   for (const a of assetCopies) {
     try {
@@ -289,36 +287,21 @@ interface Compiled {
   generated: Generated[];
   tree: TreeNode[];
   policies: PolicyPlacement[];
-  guards: Guard[];
   warnings: string[];
   errors: string[];
 }
 
-/** One emitted output file: a transform Generated, a shipped static, or a guard artifact. */
+/** One emitted output file: a transform Generated or a shipped static. */
 type OutputFile = Omit<Generated, "kind"> & { kind: EmittedKind | "hook" };
 
-/** The complete file set an export writes — generated content, shipped static skills
- *  (static wins on relOut collision, except the guard-generated hooks.json), and the
- *  territory-guard artifacts. Shared by {@link runExport} and {@link previewVault} so the
- *  preview always describes exactly what the export would do. */
-function outputFileSet(generated: Generated[], guards: Guard[], vaultPath: string | undefined): OutputFile[] {
-  // Territory guards: when any scope declares territory + hard policies, hooks.json is
-  // generated (base static content + PreToolUse doorman) and replaces the static copy,
-  // alongside the guard script and its manifest.
-  const guardFiles: OutputFile[] = guards.length
-    ? [
-        { kind: "hook", relOut: "hooks/hooks.json", content: buildHooksJson(true), from: "(generated)" },
-        { kind: "hook", relOut: "hooks/scope-guard.sh", content: GUARD_SCRIPT, from: "(generated)" },
-        { kind: "hook", relOut: "hooks/scope-guard.py", content: GUARD_PY, from: "(generated)" },
-        { kind: "hook", relOut: "hooks/guard-manifest.json", content: buildGuardManifest(vaultPath, guards), from: "(generated)" },
-      ]
-    : [];
-  const staticFiles = guards.length ? STATIC_FILES.filter((s) => s.relOut !== "hooks/hooks.json") : STATIC_FILES;
-  const staticRelOuts = new Set(staticFiles.map((s) => s.relOut));
+/** The complete file set an export writes — generated content plus shipped static skills
+ *  (static wins on relOut collision). Shared by {@link runExport} and {@link previewVault}
+ *  so the preview always describes exactly what the export would do. */
+function outputFileSet(generated: Generated[]): OutputFile[] {
+  const staticRelOuts = new Set(STATIC_FILES.map((s) => s.relOut));
   return [
     ...generated.filter((g) => !staticRelOuts.has(g.relOut)),
-    ...staticFiles.map((s): OutputFile => ({ kind: s.kind, relOut: s.relOut, content: s.content, from: "(static)" })),
-    ...guardFiles,
+    ...STATIC_FILES.map((s): OutputFile => ({ kind: s.kind, relOut: s.relOut, content: s.content, from: "(static)" })),
   ];
 }
 
@@ -397,9 +380,9 @@ export async function previewVault(
   app: App,
   opts: { outputDir: string; pluginName: string; fields?: DetectConfig },
 ): Promise<PreviewResult> {
-  const { notes, generated, tree, warnings, errors, policies, guards, vaultPath } = await collectAndTransform(app, opts.fields ?? DEFAULT_FIELDS, opts.pluginName);
+  const { notes, generated, tree, warnings, errors, policies } = await collectAndTransform(app, opts.fields ?? DEFAULT_FIELDS, opts.pluginName);
 
-  const files = outputFileSet(generated, guards, vaultPath);
+  const files = outputFileSet(generated);
 
   const entries: PreviewEntry[] = await Promise.all(files.map(async (g) => {
     let cached: string | null = null;
